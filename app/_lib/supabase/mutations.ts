@@ -1,12 +1,18 @@
 import { supabase } from "./client";
 import type { HelpRequestRow, RewardRedemptionRow } from "./types";
-import type { Urgency } from "../types";
+import type { ReportReason, Urgency } from "../types";
 
 export async function signUp(email: string, password: string, name: string) {
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
-    options: { data: { name, role: "Anggota Baru Kos" } },
+    options: {
+      data: { name, role: "Anggota Baru Kos" },
+      // Tanpa ini Supabase memakai Site URL project, yang bisa menunjuk domain
+      // lain dan bikin link konfirmasi mendarat di halaman mati. Origin ini
+      // harus terdaftar di Authentication > URL Configuration > Redirect URLs.
+      emailRedirectTo: typeof window === "undefined" ? undefined : window.location.origin,
+    },
   });
   if (error) throw error;
   return data;
@@ -23,46 +29,33 @@ export async function signOut() {
   if (error) throw error;
 }
 
-export async function uploadIdentityDoc(userId: string, kind: "ktp" | "selfie", file: File): Promise<string> {
-  const ext = file.name.split(".").pop() || "jpg";
-  const path = `${userId}/${kind}.${ext}`;
-  const { error } = await supabase.storage.from("identity-docs").upload(path, file, { upsert: true });
-  if (error) throw error;
-  return path;
-}
-
-export async function submitIdentityVerification(nik: string, ktpPath: string, selfiePath: string) {
-  const { data, error } = await supabase.rpc("submit_identity_verification", {
-    p_nik: nik,
-    p_ktp_path: ktpPath,
-    p_selfie_path: selfiePath,
-  });
+export async function submitIdentityVerification() {
+  const { data, error } = await supabase.rpc("submit_identity_verification");
   if (error) throw error;
   return data;
+}
+
+export async function setMyLocation(lat: number, lng: number) {
+  const { error } = await supabase.rpc("set_my_location", { p_lat: lat, p_lng: lng });
+  if (error) throw error;
 }
 
 export async function createHelpRequest(input: {
-  authorId: string;
   title: string;
   description: string;
   urgency: Urgency;
-  reward: number;
-  distanceM: number;
+  lat: number;
+  lng: number;
 }): Promise<HelpRequestRow> {
-  const { data, error } = await supabase
-    .from("help_requests")
-    .insert({
-      author_id: input.authorId,
-      title: input.title,
-      description: input.description,
-      urgency: input.urgency,
-      reward: input.reward,
-      distance_m: input.distanceM,
-    })
-    .select("*")
-    .single();
+  const { data, error } = await supabase.rpc("create_help_request", {
+    p_title: input.title,
+    p_description: input.description,
+    p_urgency: input.urgency,
+    p_lat: input.lat,
+    p_lng: input.lng,
+  });
   if (error) throw error;
-  return data;
+  return data as HelpRequestRow;
 }
 
 export async function acceptHelpRequest(requestId: string) {
@@ -71,14 +64,46 @@ export async function acceptHelpRequest(requestId: string) {
   return data as HelpRequestRow;
 }
 
+export async function completeHelpRequest(requestId: string) {
+  const { data, error } = await supabase.rpc("complete_help_request", { p_request_id: requestId });
+  if (error) throw error;
+  return data as HelpRequestRow;
+}
+
+export async function reportUser(input: {
+  reportedId: string;
+  reason: ReportReason;
+  detail?: string;
+  requestId?: string | null;
+}) {
+  const { error } = await supabase.rpc("report_user", {
+    p_reported_id: input.reportedId,
+    p_reason: input.reason,
+    p_detail: input.detail?.trim() || null,
+    p_request_id: input.requestId ?? null,
+  });
+  if (error) throw error;
+}
+
+export async function deleteHelpRequest(requestId: string) {
+  const { error } = await supabase.rpc("delete_help_request", { p_request_id: requestId });
+  if (error) throw error;
+}
+
 export async function redeemReward(rewardId: string): Promise<RewardRedemptionRow> {
   const { data, error } = await supabase.rpc("redeem_reward", { p_reward_id: rewardId });
   if (error) throw error;
   return data as RewardRedemptionRow;
 }
 
-export async function sendPanicAlert(message?: string): Promise<number> {
-  const { data, error } = await supabase.rpc("send_panic_alert", { p_message: message ?? null });
+// Tombol SOS masih simulasi, jadi client belum memanggil RPC ini. Function
+// `send_panic_alert` tetap ada di schema.sql beserta cooldown dan filter
+// radiusnya, siap dipakai begitu jalur daruratnya betulan diaktifkan.
+export async function sendPanicAlert(message?: string, radiusM = 1000): Promise<number> {
+  const { data, error } = await supabase.rpc("send_panic_alert", {
+    p_message: message ?? null,
+    p_radius_m: radiusM,
+  });
   if (error) throw error;
   return data as number;
 }

@@ -12,7 +12,7 @@ export function WelcomeScreen({
   return (
     <div className="flex flex-1 flex-col justify-center overflow-y-auto bg-sky-50 dark:bg-slate-950 px-7 py-10">
       <div className="mx-auto w-full max-w-sm">
-        <LogoLockup size={52} tagline="Bantuan sejauh 500 meter" />
+        <LogoLockup size={52} tagline="Bantuan dari tetangga terdekat" />
 
         <div className="mt-10 space-y-3">
           <h1 className="font-pixel text-2xl leading-[1.4] tracking-tight text-neutral-900 dark:text-neutral-50">
@@ -22,10 +22,16 @@ export function WelcomeScreen({
             Minta tolong hal-hal kecil, kirim sinyal darurat, dan kumpulin Karma
             Baik dari tetangga kos sekitarmu.
           </p>
+          <p className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-500">
+            Catatan: verifikasi identitas di sini{" "}
+            <span className="font-bold">simulasi</span>. Tidak ada NIK, foto KTP, atau selfie yang
+            diminta. Lokasi memakai GPS asli perangkat kamu, dan akun, karma, chat, serta
+            notifikasinya nyata.
+          </p>
         </div>
 
         <div className="mt-8 grid grid-cols-3 gap-2.5">
-          <FeaturePill icon={MapPin} label="Radius 500m" color="text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/50" />
+          <FeaturePill icon={MapPin} label="Radius GPS" color="text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/50" />
           <FeaturePill icon={Siren} label="Panic Button" color="text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/50" />
           <FeaturePill icon={Trophy} label="Karma Baik" color="text-yellow-700 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-950/50" />
         </div>

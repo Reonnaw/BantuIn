@@ -11,36 +11,55 @@ import {
   LoaderCircle,
   LogOut,
   Medal,
+  Megaphone,
+  Moon,
   ShieldCheck,
+  Sun,
+  Trash2,
   Trophy,
 } from "lucide-react";
 import { AvatarBadge } from "./AvatarBadge";
-import { karmaTier, karmaTierByLevel } from "../_lib/constants";
+import { URGENCY_META, karmaTier, karmaTierByLevel } from "../_lib/constants";
 import { DEFAULT_ICON, ICONS_BY_NAME } from "../_lib/icons";
 import { fetchLeaderboard, fetchRewards } from "../_lib/supabase/queries";
 import { redeemReward as redeemRewardMutation } from "../_lib/supabase/mutations";
 import { toLeaderboardEntry, toRewardItem } from "../_lib/supabase/adapters";
 import { BORDER, PANEL, PRESS, SHADOW, SHADOW_SM } from "../_lib/ui";
-import type { AppUser, HistoryItem, LeaderboardEntry, RewardItem } from "../_lib/types";
+import type { AppUser, HistoryItem, LeaderboardEntry, MyRequest, RewardItem } from "../_lib/types";
+
+const REQUEST_STATUS: Record<MyRequest["status"], { label: string; className: string }> = {
+  open: { label: "Menunggu bantuan", className: "bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border-blue-600 dark:border-blue-400" },
+  accepted: { label: "Sedang dibantu", className: "bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border-emerald-600 dark:border-emerald-400" },
+  completed: { label: "Selesai", className: "bg-neutral-100 dark:bg-slate-800 text-neutral-600 dark:text-neutral-300 border-neutral-400" },
+};
 
 export function ProfileScreen({
   user,
   karma,
   history,
+  myRequests,
+  onDeleteRequest,
   onLogout,
   desktop,
+  dark,
+  onToggleDark,
   onKarmaChange,
 }: {
   user: AppUser;
   karma: number;
   history: HistoryItem[];
+  myRequests: MyRequest[];
+  onDeleteRequest: (id: string) => void;
   onLogout: () => void;
   desktop?: boolean;
+  dark: boolean;
+  onToggleDark: () => void;
   onKarmaChange: (delta: number, message: string) => void;
 }) {
   const [rewards, setRewards] = useState<RewardItem[]>([]);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [redeemingId, setRedeemingId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -82,15 +101,27 @@ export function ProfileScreen({
   };
 
   return (
-    <div className={`flex-1 overflow-y-auto px-5 ${desktop ? "pb-8" : "pb-28"} pt-6`}>
+    <div className={`flex-1 overflow-y-auto px-5 ${desktop ? "pb-8" : "mx-auto w-full max-w-2xl pb-28"} pt-6`}>
       <div className="mb-4 flex items-center justify-between">
         <h1 className="font-pixel text-base text-neutral-900 dark:text-neutral-50">Profil Kamu</h1>
-        <button
-          onClick={onLogout}
-          className={`flex items-center gap-1 rounded-md bg-white dark:bg-slate-800 px-3 py-1.5 text-[11px] font-bold text-neutral-600 dark:text-neutral-300 ${BORDER} ${SHADOW_SM} ${PRESS}`}
-        >
-          <LogOut className="size-3" /> Keluar
-        </button>
+        <div className="flex items-center gap-2">
+          {!desktop && (
+            <button
+              onClick={onToggleDark}
+              aria-label="Ganti tema"
+              className={`flex items-center gap-1 rounded-md bg-white dark:bg-slate-800 px-3 py-1.5 text-[11px] font-bold text-neutral-600 dark:text-neutral-300 ${BORDER} ${SHADOW_SM} ${PRESS}`}
+            >
+              {dark ? <Sun className="size-3" /> : <Moon className="size-3" />}
+              {dark ? "Terang" : "Gelap"}
+            </button>
+          )}
+          <button
+            onClick={onLogout}
+            className={`flex items-center gap-1 rounded-md bg-white dark:bg-slate-800 px-3 py-1.5 text-[11px] font-bold text-neutral-600 dark:text-neutral-300 ${BORDER} ${SHADOW_SM} ${PRESS}`}
+          >
+            <LogOut className="size-3" /> Keluar
+          </button>
+        </div>
       </div>
 
       <div className={desktop ? "grid grid-cols-2 gap-5 items-start" : "space-y-6"}>
@@ -113,7 +144,6 @@ export function ProfileScreen({
             )}
           </div>
 
-          {/* Karma Tier Card */}
           <div className={`rounded-lg bg-blue-600 p-5 text-white ${BORDER} ${SHADOW}`}>
             <div className="flex items-start justify-between">
               <div>
@@ -146,7 +176,6 @@ export function ProfileScreen({
             </div>
           </div>
 
-          {/* Stats */}
           <div className="grid grid-cols-3 gap-2.5">
             {[
               { label: "Misi Selesai", value: String(history.length), icon: Trophy },
@@ -171,7 +200,74 @@ export function ProfileScreen({
         </div>
 
         <div className="space-y-6">
-          {/* History */}
+          <div>
+            <div className="mb-2.5 flex items-center justify-between">
+              <h2 className="text-sm font-bold text-neutral-900 dark:text-neutral-50">Request Kamu</h2>
+              <Megaphone className="size-4 text-neutral-400" />
+            </div>
+            {myRequests.length === 0 ? (
+              <div className={`rounded-lg ${PANEL} p-5 text-center ${SHADOW_SM}`}>
+                <p className="text-xs font-semibold text-neutral-600 dark:text-neutral-300">
+                  Kamu belum pernah minta bantuan
+                </p>
+                <p className="mt-1 text-[11px] text-neutral-500 dark:text-neutral-400">
+                  Request yang kamu buat bakal muncul di sini.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {myRequests.map((r) => {
+                  const meta = URGENCY_META[r.urgency];
+                  const status = REQUEST_STATUS[r.status];
+                  const confirming = confirmDeleteId === r.id;
+                  return (
+                    <div key={r.id} className={`rounded-lg ${PANEL} p-3.5 ${SHADOW_SM}`}>
+                      <div className="flex items-start gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-xs font-bold text-neutral-800 dark:text-neutral-100">
+                            {r.title}
+                          </p>
+                          <p className="mt-0.5 flex items-center gap-1 text-[10px] text-neutral-500 dark:text-neutral-400">
+                            <Clock3 className="size-2.5" />
+                            {r.date} &middot; {r.reward} Karma
+                          </p>
+                        </div>
+                        {r.canDelete && (
+                          <button
+                            onClick={() =>
+                              confirming ? onDeleteRequest(r.id) : setConfirmDeleteId(r.id)
+                            }
+                            aria-label={confirming ? "Konfirmasi hapus request" : "Hapus request"}
+                            className={`flex shrink-0 items-center gap-1 rounded-md px-2 py-1.5 text-[10px] font-bold ${BORDER} ${PRESS} ${
+                              confirming
+                                ? "bg-red-600 text-white"
+                                : "bg-white dark:bg-slate-800 text-red-600 dark:text-red-400"
+                            }`}
+                          >
+                            <Trash2 className="size-3" />
+                            {confirming ? "Yakin?" : "Hapus"}
+                          </button>
+                        )}
+                      </div>
+                      <div className="mt-2 flex items-center gap-1.5">
+                        <span
+                          className={`rounded-md ${meta.bg} ${meta.text} px-2 py-0.5 text-[10px] font-bold border-2 ${meta.border}`}
+                        >
+                          {meta.label}
+                        </span>
+                        <span
+                          className={`rounded-md px-2 py-0.5 text-[10px] font-bold border-2 ${status.className}`}
+                        >
+                          {status.label}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           <div>
             <div className="mb-2.5 flex items-center justify-between">
               <h2 className="text-sm font-bold text-neutral-900 dark:text-neutral-50">Riwayat Bantuan</h2>
@@ -211,7 +307,6 @@ export function ProfileScreen({
             )}
           </div>
 
-          {/* Rewards */}
           <div>
             <div className="mb-2.5 flex items-center justify-between">
               <h2 className="text-sm font-bold text-neutral-900 dark:text-neutral-50">Tukar Karma</h2>
@@ -256,7 +351,6 @@ export function ProfileScreen({
             </div>
           </div>
 
-          {/* Leaderboard */}
           <div>
             <div className="mb-2.5 flex items-center justify-between">
               <h2 className="text-sm font-bold text-neutral-900 dark:text-neutral-50">

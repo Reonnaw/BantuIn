@@ -20,15 +20,45 @@ import { HomeScreen } from "./HomeScreen";
 import { ProfileScreen } from "./ProfileScreen";
 import { NotificationsPanel } from "./NotificationsPanel";
 import { RequestDetailSheet } from "./RequestDetailSheet";
-import { URGENCY_META, category, rewardForUrgency } from "../_lib/constants";
+import { URGENCY_META, category } from "../_lib/constants";
+import { useGeolocation } from "../_lib/useGeolocation";
 import { BORDER, PRESS, SHADOW, SHADOW_SM, chunkyButton, inputClass } from "../_lib/ui";
 import { LogoMark } from "./Logo";
 import { supabase } from "../_lib/supabase/client";
-import { fetchRequests, fetchRequestById, fetchKarmaHistory, fetchNotifications } from "../_lib/supabase/queries";
-import { createHelpRequest, acceptHelpRequest, sendPanicAlert, markNotificationsRead } from "../_lib/supabase/mutations";
-import { toHelpRequest, toHistoryItem, toNotificationItem } from "../_lib/supabase/adapters";
+import {
+  fetchNearbyRequests,
+  fetchKarmaHistory,
+  fetchMyRequests,
+  fetchNotifications,
+} from "../_lib/supabase/queries";
+import {
+  createHelpRequest,
+  acceptHelpRequest,
+  completeHelpRequest,
+  deleteHelpRequest,
+  reportUser,
+  sendPanicAlert,
+  markNotificationsRead,
+  setMyLocation,
+} from "../_lib/supabase/mutations";
+import {
+  toHelpRequest,
+  toHistoryItem,
+  toMyRequest,
+  toNotificationItem,
+} from "../_lib/supabase/adapters";
 import type { NotificationRow } from "../_lib/supabase/types";
-import type { AppUser, Category, HelpRequest, HistoryItem, NotificationItem, Tab, Urgency } from "../_lib/types";
+import type {
+  AppUser,
+  Category,
+  HelpRequest,
+  HistoryItem,
+  MyRequest,
+  NotificationItem,
+  ReportReason,
+  Tab,
+  Urgency,
+} from "../_lib/types";
 
 function upsertRequest(list: HelpRequest[], next: HelpRequest): HelpRequest[] {
   const idx = list.findIndex((r) => r.id === next.id);
@@ -51,16 +81,20 @@ export function BantuInApp({
   onToggleDark: () => void;
   onLogout: () => void;
 }) {
+  const { coords, error: locationError, loading: locatingUser } = useGeolocation();
+  const [feedTick, setFeedTick] = useState(0);
   const [tab, setTab] = useState<Tab>("home");
   const [filter, setFilter] = useState<Category>("urgent");
   const [requests, setRequests] = useState<HelpRequest[]>([]);
   const [loadingRequests, setLoadingRequests] = useState(true);
   const [karma, setKarma] = useState(user.karma);
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [myRequests, setMyRequests] = useState<MyRequest[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [isCreateOpen, setCreateOpen] = useState(false);
   const [isPanicOpen, setPanicOpen] = useState(false);
-  const [panicStage, setPanicStage] = useState<"confirm" | "sending" | "sent">("confirm");
+  const [panicStage, setPanicStage] = useState<"confirm" | "sending" | "sent" | "failed">("confirm");
+  const [panicError, setPanicError] = useState<string | null>(null);
   const [neighborsNotified, setNeighborsNotified] = useState(0);
   const [notifOpen, setNotifOpen] = useState(false);
   const [detailRequest, setDetailRequest] = useState<HelpRequest | null>(null);
@@ -86,18 +120,37 @@ export function BantuInApp({
     };
   }, []);
 
-  // Initial load
+  useEffect(() => {
+    if (!coords) return;
+    setMyLocation(coords.lat, coords.lng).catch(() => {});
+  }, [coords]);
+
   useEffect(() => {
     let active = true;
-    Promise.all([fetchRequests(), fetchKarmaHistory(user.id), fetchNotifications(user.id)])
-      .then(([reqRows, historyRows, notifRows]) => {
+    Promise.all([fetchKarmaHistory(user.id), fetchNotifications(user.id), fetchMyRequests(user.id)])
+      .then(([historyRows, notifRows, myRows]) => {
         if (!active) return;
-        setRequests(reqRows.map(toHelpRequest));
         setHistory(historyRows.map(toHistoryItem));
         setNotifications(notifRows.map(toNotificationItem));
+        setMyRequests(myRows.map(toMyRequest));
       })
       .catch(() => {
         if (active) showToast("Gagal memuat data. Coba refresh halaman.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [user.id, feedTick]);
+
+  useEffect(() => {
+    if (locatingUser) return;
+    let active = true;
+    fetchNearbyRequests(coords)
+      .then((rows) => {
+        if (active) setRequests(rows.map(toHelpRequest));
+      })
+      .catch(() => {
+        if (active) showToast("Gagal memuat feed. Coba refresh halaman.");
       })
       .finally(() => {
         if (active) setLoadingRequests(false);
@@ -105,27 +158,13 @@ export function BantuInApp({
     return () => {
       active = false;
     };
-  }, [user.id]);
+  }, [coords, locatingUser, feedTick]);
 
-  // Realtime: feed request baru / status berubah (diterima orang lain)
   useEffect(() => {
     const channel = supabase
       .channel(`help_requests-feed-${user.id}`)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "help_requests" }, async (payload) => {
-        try {
-          const full = await fetchRequestById((payload.new as { id: string }).id);
-          setRequests((prev) => upsertRequest(prev, toHelpRequest(full)));
-        } catch {
-          // request mungkin sudah tidak bisa dibaca lagi, abaikan.
-        }
-      })
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "help_requests" }, async (payload) => {
-        try {
-          const full = await fetchRequestById((payload.new as { id: string }).id);
-          setRequests((prev) => upsertRequest(prev, toHelpRequest(full)));
-        } catch {
-          // ignore
-        }
+      .on("postgres_changes", { event: "*", schema: "public", table: "help_requests" }, () => {
+        setFeedTick((t) => t + 1);
       })
       .subscribe();
 
@@ -134,7 +173,18 @@ export function BantuInApp({
     };
   }, [user.id]);
 
-  // Realtime: notifikasi masuk buat user ini
+  // Izin notifikasi cuma boleh diminta dari gestur pengguna, jadi dititipkan ke
+  // sentuhan pertama di dalam aplikasi. Tanpa ini, sinyal SOS tetangga cuma
+  // muncul di panel notifikasi dan tidak membunyikan perangkat.
+  useEffect(() => {
+    if (typeof Notification === "undefined" || Notification.permission !== "default") return;
+    const ask = () => {
+      Notification.requestPermission().catch(() => {});
+    };
+    window.addEventListener("pointerdown", ask, { once: true });
+    return () => window.removeEventListener("pointerdown", ask);
+  }, []);
+
   useEffect(() => {
     const channel = supabase
       .channel(`notifications-${user.id}`)
@@ -142,7 +192,31 @@ export function BantuInApp({
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` },
         (payload) => {
-          setNotifications((prev) => [toNotificationItem(payload.new as NotificationRow), ...prev]);
+          const row = payload.new as NotificationRow;
+          // Realtime dan refetch bisa membawa baris yang sama, dan id ganda
+          // bikin React protes "two children with the same key".
+          setNotifications((prev) =>
+            prev.some((n) => n.id === row.id) ? prev : [toNotificationItem(row), ...prev]
+          );
+          // Karma penolong baru dibayar saat pembuat request menekan konfirmasi,
+          // yang terjadi di sesi orang lain. Notifikasi ini pemicunya di sini.
+          if (row.type === "panic_alert") {
+            showToast(row.title);
+            if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+              try {
+                new Notification("BantuIn: sinyal darurat", {
+                  body: row.title,
+                  tag: row.id,
+                  icon: "/icon.svg",
+                });
+              } catch {}
+            }
+          }
+          if (row.type === "karma_earned") {
+            const earned = Number(row.data?.karma ?? 0);
+            if (earned > 0) setKarma((k) => k + earned);
+            setFeedTick((t) => t + 1);
+          }
         }
       )
       .subscribe();
@@ -159,7 +233,7 @@ export function BantuInApp({
 
   const acceptQuest = async (id: string) => {
     const req = requests.find((r) => r.id === id);
-    if (!req || req.accepted) return;
+    if (!req || req.accepted || req.authorId === user.id) return;
     try {
       await acceptHelpRequest(id);
       const updated: HelpRequest = {
@@ -172,15 +246,58 @@ export function BantuInApp({
         acceptorVerified: user.verified,
       };
       setRequests((prev) => upsertRequest(prev, updated));
-      setKarma((k) => k + req.reward);
-      setHistory((prev) => [
-        { id: `h-${req.id}-${Date.now()}`, title: req.title, date: "Hari ini", karma: req.reward },
-        ...prev,
-      ]);
+      setMyRequests((prev) =>
+        prev.map((r) => (r.id === id ? { ...r, status: "accepted", canDelete: false } : r))
+      );
       setDetailRequest((cur) => (cur && cur.id === id ? updated : cur));
-      showToast(`+${req.reward} Karma Baik! Semangat bantu ${req.authorName} ya`);
+      showToast(
+        `Semangat bantu ${req.authorName} ya. Karma masuk setelah dia konfirmasi selesai.`
+      );
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Gagal menerima request.");
+    }
+  };
+
+  const completeQuest = async (id: string) => {
+    const req = requests.find((r) => r.id === id);
+    if (!req || req.authorId !== user.id || !req.accepted || req.completed) return;
+    try {
+      await completeHelpRequest(id);
+      const updated: HelpRequest = { ...req, status: "completed", completed: true };
+      setRequests((prev) => upsertRequest(prev, updated));
+      setMyRequests((prev) =>
+        prev.map((r) => (r.id === id ? { ...r, status: "completed", canDelete: false } : r))
+      );
+      setDetailRequest((cur) => (cur && cur.id === id ? updated : cur));
+      showToast(`Makasih! ${req.acceptorName ?? "Penolongmu"} dapat ${req.reward} Karma.`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Gagal mengonfirmasi bantuan selesai.");
+    }
+  };
+
+  const submitReport = async (input: { reportedId: string; reason: ReportReason; detail: string }) => {
+    try {
+      await reportUser({
+        reportedId: input.reportedId,
+        reason: input.reason,
+        detail: input.detail,
+        requestId: detailRequest?.id ?? null,
+      });
+      showToast("Laporan terkirim. Terima kasih sudah menjaga komunitas.");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Gagal mengirim laporan.");
+    }
+  };
+
+  const removeRequest = async (id: string) => {
+    try {
+      await deleteHelpRequest(id);
+      setRequests((prev) => prev.filter((r) => r.id !== id));
+      setMyRequests((prev) => prev.filter((r) => r.id !== id));
+      setDetailRequest((cur) => (cur && cur.id === id ? null : cur));
+      showToast("Request kamu sudah dihapus.");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Gagal menghapus request.");
     }
   };
 
@@ -192,45 +309,24 @@ export function BantuInApp({
 
   const submitRequest = async () => {
     if (!formTitle.trim() || submitting) return;
+    if (!coords) {
+      showToast(locationError ?? "Lokasi belum aktif. Izinkan akses lokasi dulu ya.");
+      return;
+    }
     setSubmitting(true);
     try {
-      const reward = rewardForUrgency(formUrgency);
-      const distanceM = Math.floor(20 + Math.random() * 150);
       const created = await createHelpRequest({
-        authorId: user.id,
         title: formTitle.trim(),
-        description: formDesc.trim() || "Tidak ada detail tambahan.",
+        description: formDesc.trim(),
         urgency: formUrgency,
-        reward,
-        distanceM,
+        lat: coords.lat,
+        lng: coords.lng,
       });
-      const newRequest: HelpRequest = {
-        id: created.id,
-        authorId: user.id,
-        title: created.title,
-        description: created.description,
-        urgency: created.urgency,
-        category: category(created.urgency),
-        distanceM: created.distance_m,
-        postedMinAgo: 0,
-        authorName: user.name,
-        authorColor: user.color,
-        authorInitial: user.initial,
-        authorVerified: user.verified,
-        reward: created.reward,
-        icon: created.icon || "Sparkles",
-        accepted: false,
-        acceptedBy: null,
-        acceptorName: null,
-        acceptorColor: null,
-        acceptorInitial: null,
-        acceptorVerified: null,
-      };
-      setRequests((prev) => upsertRequest(prev, newRequest));
-      setFilter(newRequest.category);
+      setFeedTick((t) => t + 1);
+      setFilter(category(created.urgency));
       setCreateOpen(false);
       resetCreateForm();
-      showToast("Request kamu tayang di radius 500m");
+      showToast("Request kamu tayang buat tetangga terdekat");
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Gagal mengirim request.");
     } finally {
@@ -240,18 +336,21 @@ export function BantuInApp({
 
   const openPanic = () => {
     setPanicStage("confirm");
+    setPanicError(null);
     setPanicOpen(true);
   };
 
+  // SOS tetap berlabel simulasi, tapi notifikasinya sungguhan dikirim ke akun
+  // dalam radius 1 km supaya perangkat di dekat kita benar-benar berbunyi.
+  // Judul notifikasinya diberi awalan [SIMULASI] di send_panic_alert().
   const confirmPanic = async () => {
     setPanicStage("sending");
     try {
-      const count = await sendPanicAlert();
-      setNeighborsNotified(count);
+      setNeighborsNotified(await sendPanicAlert());
       setPanicStage("sent");
-    } catch {
-      setNeighborsNotified(0);
-      setPanicStage("sent");
+    } catch (err) {
+      setPanicError(err instanceof Error ? err.message : "Gagal mengirim sinyal darurat.");
+      setPanicStage("failed");
     }
   };
 
@@ -270,7 +369,6 @@ export function BantuInApp({
 
   return (
     <>
-      {/* Toast */}
       <div
         className={`absolute top-3 left-1/2 -translate-x-1/2 z-50 transition-all duration-300 ${
           toast ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-4 pointer-events-none"
@@ -314,6 +412,8 @@ export function BantuInApp({
                 onOpenNotifications={openNotifications}
                 hasUnread={hasUnread}
                 desktop={desktop}
+                locating={locatingUser}
+                locationError={locationError}
               />
             )
           ) : (
@@ -321,8 +421,12 @@ export function BantuInApp({
               user={user}
               karma={karma}
               history={history}
+              myRequests={myRequests}
+              onDeleteRequest={removeRequest}
               onLogout={onLogout}
               desktop={desktop}
+              dark={dark}
+              onToggleDark={onToggleDark}
               onKarmaChange={(delta, message) => {
                 if (delta !== 0) setKarma((k) => k + delta);
                 showToast(message);
@@ -331,8 +435,8 @@ export function BantuInApp({
           )}
 
           {!desktop && (
-            <div className="relative shrink-0 border-t-2 border-neutral-900 dark:border-neutral-100 bg-white dark:bg-slate-900 px-6 pt-2 pb-[max(0.6rem,env(safe-area-inset-bottom))]">
-              <div className="flex items-center justify-between">
+            <div className="fixed inset-x-0 bottom-0 z-40 border-t-2 border-neutral-900 dark:border-neutral-100 bg-white dark:bg-slate-900 px-6 pt-2 pb-[max(0.6rem,env(safe-area-inset-bottom))]">
+              <div className="mx-auto flex w-full max-w-2xl items-center justify-between">
                 <NavButton active={tab === "home"} icon={House} label="Beranda" onClick={() => setTab("home")} />
                 <button
                   onClick={() => setCreateOpen(true)}
@@ -354,9 +458,12 @@ export function BantuInApp({
         currentUser={user}
         onClose={() => setDetailRequest(null)}
         onAccept={acceptQuest}
+        onComplete={completeQuest}
+        onDelete={removeRequest}
+        onReport={submitReport}
+        userCoords={coords}
       />
 
-      {/* Create Request Sheet */}
       <div
         className={`fixed inset-0 z-[60] flex items-end justify-center transition-all duration-300 ${
           isCreateOpen ? "pointer-events-auto" : "pointer-events-none"
@@ -441,13 +548,12 @@ export function BantuInApp({
               className={`mt-2 w-full ${chunkyButton("bg-blue-600")}`}
             >
               {submitting ? <LoaderCircle className="size-4 animate-spin" /> : <Send className="size-4" />}
-              Kirim ke Radius 500m
+              Kirim ke Tetangga Terdekat
             </button>
           </div>
         </div>
       </div>
 
-      {/* Panic Modal */}
       <div
         className={`fixed inset-0 z-[70] flex items-center justify-center px-6 transition-all duration-300 ${
           isPanicOpen ? "pointer-events-auto" : "pointer-events-none"
@@ -474,9 +580,13 @@ export function BantuInApp({
               <h3 className="font-pixel text-sm text-neutral-900 dark:text-neutral-50">
                 Kirim Sinyal Darurat?
               </h3>
+              <span className="mt-3 inline-block rounded-md bg-yellow-400 px-2.5 py-1 text-[10px] font-bold text-neutral-900 border-2 border-neutral-900">
+                LATIHAN / SIMULASI
+              </span>
               <p className="mt-2.5 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
-                Semua tetangga dalam radius 500m akan langsung diberi notifikasi prioritas.
-                Gunakan hanya untuk kondisi darurat sungguhan.
+                Notifikasinya benar-benar dikirim ke tetangga dalam radius 1 km, jadi perangkat
+                mereka akan berbunyi. Isinya ditandai sebagai latihan, bukan darurat sungguhan.
+                Bisa dikirim 1x tiap 5 menit. Kalau ini darurat beneran, hubungi 112.
               </p>
               <div className="mt-5 flex gap-2.5">
                 <button
@@ -496,7 +606,7 @@ export function BantuInApp({
             <div className="py-4">
               <LoaderCircle className="mx-auto size-12 animate-spin text-red-600 dark:text-red-400" strokeWidth={2} />
               <p className="mt-4 text-sm font-semibold text-neutral-800 dark:text-neutral-100">
-                Mengirim sinyal darurat...
+                Mensimulasikan sinyal darurat...
               </p>
             </div>
           )}
@@ -507,13 +617,32 @@ export function BantuInApp({
                 <Check className="size-9 text-white" strokeWidth={2.5} />
               </div>
               <h3 className="font-pixel text-sm text-neutral-900 dark:text-neutral-50">
-                Bantuan Segera Datang
+                Sinyal Latihan Terkirim
               </h3>
               <p className="mt-2.5 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
-                {neighborsNotified} tetangga sudah menerima sinyalmu. Tetap tenang, kamu nggak sendirian.
+                {neighborsNotified > 0
+                  ? `${neighborsNotified} tetangga dalam radius 1 km sudah menerima notifikasi latihan ini di perangkat mereka.`
+                  : "Belum ada tetangga dengan lokasi aktif dalam radius 1 km, jadi tidak ada yang dikabari. Kalau ini darurat sungguhan, hubungi 112."}
               </p>
-              <button onClick={closePanic} className={`mt-5 w-full ${chunkyButton("bg-neutral-900 dark:bg-neutral-100 dark:text-neutral-900")}`}>
+              <button onClick={closePanic} className={`mt-5 w-full ${chunkyButton("bg-neutral-900 dark:bg-neutral-100", "text-white dark:text-neutral-900")}`}>
                 Oke, Mengerti
+              </button>
+            </>
+          )}
+
+          {panicStage === "failed" && (
+            <>
+              <div className={`relative mx-auto mb-4 flex size-20 items-center justify-center rounded-lg bg-yellow-500 ${BORDER}`}>
+                <Siren className="size-9 text-white" strokeWidth={2.5} />
+              </div>
+              <h3 className="font-pixel text-sm text-neutral-900 dark:text-neutral-50">
+                Sinyal Tidak Terkirim
+              </h3>
+              <p className="mt-2.5 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+                {panicError}
+              </p>
+              <button onClick={closePanic} className={`mt-5 w-full ${chunkyButton("bg-neutral-900 dark:bg-neutral-100", "text-white dark:text-neutral-900")}`}>
+                Tutup
               </button>
             </>
           )}

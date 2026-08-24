@@ -1,32 +1,5 @@
--- =====================================================================
--- BantuIn — Supabase database schema
--- =====================================================================
--- Cara pakai:
---   1. Buka project Supabase kamu > SQL Editor > New query.
---   2. Copy-paste SELURUH isi file ini, lalu klik "Run".
---   3. Aman dijalankan ulang (idempotent) — pakai IF NOT EXISTS / DROP ... IF EXISTS
---      di beberapa bagian supaya tidak error kalau di-run dua kali.
---   4. Setelah ini jalan, buat bucket Storage "identity-docs" (lihat bagian
---      STORAGE di paling bawah) — bucket harus dibuat lewat Dashboard atau
---      lewat SQL storage.buckets seperti di bawah.
---
--- Lihat docs/SUPABASE_SETUP.md untuk panduan lengkap step-by-step.
--- =====================================================================
+create extension if not exists "pgcrypto";
 
--- ---------------------------------------------------------------------
--- 0. EXTENSIONS
--- ---------------------------------------------------------------------
-create extension if not exists "pgcrypto"; -- untuk gen_random_uuid()
-
--- ---------------------------------------------------------------------
--- 1. TABLES
--- ---------------------------------------------------------------------
-
--- Profil publik tiap user. 1 baris dibuat otomatis oleh trigger setiap
--- ada user baru daftar lewat Supabase Auth (lihat bagian TRIGGERS).
--- Data di sini boleh dibaca siapa saja yang login (dipakai buat nampilin
--- nama/avatar penulis request, leaderboard, dll) — TIDAK ada data sensitif
--- di sini (email/NIK/KTP disimpan terpisah, lihat identity_verifications).
 create table if not exists public.profiles (
   id uuid primary key references auth.users (id) on delete cascade,
   name text not null,
@@ -38,23 +11,18 @@ create table if not exists public.profiles (
   created_at timestamptz not null default now()
 );
 
-comment on table public.profiles is 'Profil publik user, 1:1 dengan auth.users. Dibuat otomatis oleh trigger on_auth_user_created.';
-
--- Data verifikasi identitas (KTP). Dipisah dari profiles supaya NIK &
--- path foto tidak ikut ke-expose lewat policy "profiles bisa dibaca semua
--- orang". Hanya pemiliknya sendiri yang bisa baca baris ini.
 create table if not exists public.identity_verifications (
   user_id uuid primary key references public.profiles (id) on delete cascade,
-  nik text not null,
-  ktp_path text not null,
-  selfie_path text not null,
   status text not null default 'verified' check (status in ('pending', 'verified', 'rejected')),
+  simulated boolean not null default true,
   created_at timestamptz not null default now()
 );
 
-comment on table public.identity_verifications is 'Data KYC privat per user. Hanya bisa dibaca oleh pemiliknya sendiri.';
+alter table public.identity_verifications drop column if exists nik;
+alter table public.identity_verifications drop column if exists ktp_path;
+alter table public.identity_verifications drop column if exists selfie_path;
+alter table public.identity_verifications add column if not exists simulated boolean not null default true;
 
--- Request bantuan yang tampil di beranda (feed).
 create table if not exists public.help_requests (
   id uuid primary key default gen_random_uuid(),
   author_id uuid not null references public.profiles (id) on delete cascade,
@@ -63,18 +31,29 @@ create table if not exists public.help_requests (
   urgency text not null check (urgency in ('low', 'medium', 'high')),
   reward integer not null check (reward > 0),
   icon text not null default 'Sparkles',
-  distance_m integer not null default 50,
   status text not null default 'open' check (status in ('open', 'accepted', 'completed')),
   accepted_by uuid references public.profiles (id) on delete set null,
   accepted_at timestamptz,
   created_at timestamptz not null default now()
 );
 
-comment on table public.help_requests is 'Feed permintaan tolong. category (urgent/daily) dihitung di client dari urgency, tidak disimpan di DB.';
+alter table public.help_requests drop column if exists distance_m;
+alter table public.help_requests add column if not exists completed_at timestamptz;
 
--- Ledger karma: setiap kali user menerima karma (karena membantu),
--- 1 baris ditambahkan di sini. Ini juga yang jadi sumber data "Riwayat
--- Bantuan" di halaman profil.
+create table if not exists public.help_request_locations (
+  request_id uuid primary key references public.help_requests (id) on delete cascade,
+  lat double precision not null check (lat between -90 and 90),
+  lng double precision not null check (lng between -180 and 180),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.user_locations (
+  user_id uuid primary key references public.profiles (id) on delete cascade,
+  lat double precision not null check (lat between -90 and 90),
+  lng double precision not null check (lng between -180 and 180),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.karma_history (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles (id) on delete cascade,
@@ -84,9 +63,6 @@ create table if not exists public.karma_history (
   created_at timestamptz not null default now()
 );
 
-comment on table public.karma_history is 'Riwayat perolehan karma per user. Hanya diisi lewat function accept_help_request().';
-
--- Chat 1:1 per request, antara pembuat request & yang menerima bantuan.
 create table if not exists public.chat_messages (
   id uuid primary key default gen_random_uuid(),
   request_id uuid not null references public.help_requests (id) on delete cascade,
@@ -95,9 +71,6 @@ create table if not exists public.chat_messages (
   created_at timestamptz not null default now()
 );
 
-comment on table public.chat_messages is 'Pesan chat per help_request. Hanya author & accepted_by request itu yang boleh baca/tulis.';
-
--- Notifikasi in-app per user.
 create table if not exists public.notifications (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles (id) on delete cascade,
@@ -108,9 +81,6 @@ create table if not exists public.notifications (
   created_at timestamptz not null default now()
 );
 
-comment on table public.notifications is 'Notifikasi in-app. Diisi otomatis oleh function-function di bawah.';
-
--- Sinyal darurat (panic button).
 create table if not exists public.panic_alerts (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles (id) on delete cascade,
@@ -118,11 +88,6 @@ create table if not exists public.panic_alerts (
   created_at timestamptz not null default now()
 );
 
-comment on table public.panic_alerts is 'Log sinyal darurat. Insert lewat function send_panic_alert().';
-
--- Katalog reward yang bisa ditukar pakai karma. Diisi manual oleh admin
--- (lewat SQL editor / dashboard table editor) — TIDAK ada policy insert
--- untuk role authenticated.
 create table if not exists public.rewards (
   id uuid primary key default gen_random_uuid(),
   label text not null,
@@ -131,10 +96,6 @@ create table if not exists public.rewards (
   created_at timestamptz not null default now()
 );
 
-comment on table public.rewards is 'Katalog reward. Kelola isinya lewat Table Editor di Supabase Dashboard.';
-
--- Riwayat penukaran reward, sekaligus mencegah race condition double-spend
--- karma (dicek & di-insert dalam 1 transaction di function redeem_reward()).
 create table if not exists public.reward_redemptions (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles (id) on delete cascade,
@@ -143,21 +104,27 @@ create table if not exists public.reward_redemptions (
   created_at timestamptz not null default now()
 );
 
-comment on table public.reward_redemptions is 'Riwayat tukar karma. Insert lewat function redeem_reward().';
+create table if not exists public.user_reports (
+  id uuid primary key default gen_random_uuid(),
+  reporter_id uuid not null references public.profiles (id) on delete cascade,
+  reported_id uuid not null references public.profiles (id) on delete cascade,
+  request_id uuid references public.help_requests (id) on delete set null,
+  reason text not null check (reason in ('spam', 'penipuan', 'pelecehan', 'identitas_palsu', 'lainnya')),
+  detail text check (detail is null or char_length(detail) <= 500),
+  status text not null default 'open' check (status in ('open', 'reviewed', 'dismissed')),
+  created_at timestamptz not null default now(),
+  constraint user_reports_no_self check (reporter_id <> reported_id)
+);
 
--- ---------------------------------------------------------------------
--- 2. INDEXES
--- ---------------------------------------------------------------------
 create index if not exists idx_help_requests_status_created on public.help_requests (status, created_at desc);
 create index if not exists idx_help_requests_author on public.help_requests (author_id);
 create index if not exists idx_karma_history_user_created on public.karma_history (user_id, created_at desc);
 create index if not exists idx_chat_messages_request_created on public.chat_messages (request_id, created_at asc);
 create index if not exists idx_notifications_user_created on public.notifications (user_id, created_at desc);
 create index if not exists idx_profiles_karma on public.profiles (karma desc);
+create index if not exists idx_user_reports_reporter_created on public.user_reports (reporter_id, created_at desc);
+create index if not exists idx_user_reports_reported on public.user_reports (reported_id, status);
 
--- ---------------------------------------------------------------------
--- 3. TRIGGER: auto-create profile saat ada user baru daftar
--- ---------------------------------------------------------------------
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -183,15 +150,196 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
 
--- ---------------------------------------------------------------------
--- 4. FUNCTIONS (RPC) — semua logic yang harus atomik & tervalidasi
---    dijalankan lewat SECURITY DEFINER function, dipanggil dari client
---    pakai supabase.rpc(...). Ini yang membuat karma/status tidak bisa
---    dimanipulasi langsung dari client meskipun anon key ke-expose.
--- ---------------------------------------------------------------------
+create or replace function public.haversine_m(
+  lat1 double precision,
+  lng1 double precision,
+  lat2 double precision,
+  lng2 double precision
+)
+returns double precision
+language sql
+immutable
+as $$
+  select 2 * 6371000 * asin(least(1, sqrt(
+    power(sin(radians(lat2 - lat1) / 2), 2)
+    + cos(radians(lat1)) * cos(radians(lat2)) * power(sin(radians(lng2 - lng1) / 2), 2)
+  )));
+$$;
 
--- Terima sebuah help_request: ubah status, kasih karma, catat histori,
--- kirim notifikasi ke pembuat request. Semua dalam 1 transaction.
+create or replace function public.set_my_location(p_lat double precision, p_lng double precision)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+begin
+  if v_uid is null then
+    raise exception 'Kamu harus login dulu.';
+  end if;
+
+  if p_lat is null or p_lng is null or p_lat not between -90 and 90 or p_lng not between -180 and 180 then
+    raise exception 'Koordinat tidak valid.';
+  end if;
+
+  insert into public.user_locations (user_id, lat, lng)
+  values (v_uid, p_lat, p_lng)
+  on conflict (user_id) do update
+    set lat = excluded.lat,
+        lng = excluded.lng,
+        updated_at = now();
+end;
+$$;
+
+create or replace function public.create_help_request(
+  p_title text,
+  p_description text,
+  p_urgency text,
+  p_lat double precision,
+  p_lng double precision
+)
+returns public.help_requests
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_title text := trim(coalesce(p_title, ''));
+  v_desc text := nullif(trim(coalesce(p_description, '')), '');
+  v_recent integer;
+  v_request public.help_requests;
+begin
+  if v_uid is null then
+    raise exception 'Kamu harus login dulu.';
+  end if;
+
+  if char_length(v_title) < 3 or char_length(v_title) > 80 then
+    raise exception 'Judul harus 3-80 karakter.';
+  end if;
+
+  if v_desc is not null and char_length(v_desc) > 200 then
+    raise exception 'Deskripsi maksimal 200 karakter.';
+  end if;
+
+  if p_urgency is null or p_urgency not in ('low', 'medium', 'high') then
+    raise exception 'Tingkat urgensi tidak dikenal.';
+  end if;
+
+  if p_lat is null or p_lng is null or p_lat not between -90 and 90 or p_lng not between -180 and 180 then
+    raise exception 'Lokasi belum aktif. Izinkan akses lokasi dulu ya.';
+  end if;
+
+  select count(*) into v_recent
+  from public.help_requests
+  where author_id = v_uid and created_at > now() - interval '1 hour';
+
+  if v_recent >= 5 then
+    raise exception 'Maksimal 5 request per jam. Coba lagi nanti ya.';
+  end if;
+
+  insert into public.help_requests (author_id, title, description, urgency, reward, icon)
+  values (
+    v_uid,
+    v_title,
+    coalesce(v_desc, 'Tidak ada detail tambahan.'),
+    p_urgency,
+    case p_urgency when 'high' then 50 when 'medium' then 30 else 15 end,
+    'Sparkles'
+  )
+  returning * into v_request;
+
+  insert into public.help_request_locations (request_id, lat, lng)
+  values (v_request.id, p_lat, p_lng);
+
+  return v_request;
+end;
+$$;
+
+-- Return type berubah (menambah request_lat/request_lng), jadi function lama harus
+-- dibuang dulu supaya script ini tetap aman dijalankan ulang.
+drop function if exists public.nearby_help_requests(double precision, double precision, integer, integer);
+
+create or replace function public.nearby_help_requests(
+  p_lat double precision default null,
+  p_lng double precision default null,
+  p_radius_m integer default 3000,
+  p_limit integer default 100
+)
+returns table (
+  id uuid,
+  author_id uuid,
+  title text,
+  description text,
+  urgency text,
+  reward integer,
+  icon text,
+  status text,
+  accepted_by uuid,
+  accepted_at timestamptz,
+  created_at timestamptz,
+  distance_m integer,
+  request_lat double precision,
+  request_lng double precision,
+  author_name text,
+  author_color text,
+  author_verified boolean,
+  acceptor_name text,
+  acceptor_color text,
+  acceptor_verified boolean
+)
+language sql
+security definer
+set search_path = public
+as $$
+  select
+    hr.id,
+    hr.author_id,
+    hr.title,
+    hr.description,
+    hr.urgency,
+    hr.reward,
+    hr.icon,
+    hr.status,
+    hr.accepted_by,
+    hr.accepted_at,
+    hr.created_at,
+    case
+      when p_lat is null or p_lng is null or loc.lat is null then null
+      else round(public.haversine_m(p_lat, p_lng, loc.lat, loc.lng))::integer
+    end as distance_m,
+    -- Titik tempat request dibuat, dikirim apa adanya supaya peta menunjuk lokasi
+    -- yang benar. Yang tetap tidak pernah keluar dari database adalah isi
+    -- user_locations, yaitu posisi terakhir tiap pengguna.
+    loc.lat as request_lat,
+    loc.lng as request_lng,
+    author.name,
+    author.avatar_color,
+    author.verified,
+    acceptor.name,
+    acceptor.avatar_color,
+    acceptor.verified
+  from public.help_requests hr
+  join public.profiles author on author.id = hr.author_id
+  left join public.profiles acceptor on acceptor.id = hr.accepted_by
+  left join public.help_request_locations loc on loc.request_id = hr.id
+  where auth.uid() is not null
+    and (
+      p_lat is null
+      or p_lng is null
+      or loc.lat is null
+      or public.haversine_m(p_lat, p_lng, loc.lat, loc.lng) <= greatest(coalesce(p_radius_m, 3000), 100)
+    )
+  order by
+    case
+      when p_lat is null or p_lng is null or loc.lat is null then null
+      else public.haversine_m(p_lat, p_lng, loc.lat, loc.lng)
+    end asc nulls last,
+    hr.created_at desc
+  limit least(coalesce(p_limit, 100), 200);
+$$;
+
 create or replace function public.accept_help_request(p_request_id uuid)
 returns public.help_requests
 language plpgsql
@@ -226,18 +374,15 @@ begin
   where id = p_request_id
   returning * into v_request;
 
-  insert into public.karma_history (user_id, request_id, title, karma_delta)
-  values (v_uid, v_request.id, v_request.title, v_request.reward);
-
-  update public.profiles set karma = karma + v_request.reward where id = v_uid;
-
+  -- Karma sengaja belum dibayar di sini. Penolong baru menerima Karma setelah
+  -- pembuat request menekan konfirmasi lewat complete_help_request().
   select name into v_acceptor_name from public.profiles where id = v_uid;
 
   insert into public.notifications (user_id, type, title, data)
   values (
     v_request.author_id,
     'request_accepted',
-    v_acceptor_name || ' menerima request ''' || v_request.title || ''' kamu',
+    v_acceptor_name || ' menerima request ''' || v_request.title || ''' kamu. Konfirmasi kalau bantuannya sudah selesai.',
     jsonb_build_object('request_id', v_request.id, 'acceptor_id', v_uid)
   );
 
@@ -245,8 +390,157 @@ begin
 end;
 $$;
 
--- Tukar karma dengan reward dari katalog. Row lock di profiles mencegah
--- double-spend kalau user klik tukar berkali-kali dengan cepat.
+create or replace function public.report_user(
+  p_reported_id uuid,
+  p_reason text,
+  p_detail text default null,
+  p_request_id uuid default null
+)
+returns public.user_reports
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_detail text := nullif(trim(coalesce(p_detail, '')), '');
+  v_recent integer;
+  v_report public.user_reports;
+begin
+  if v_uid is null then
+    raise exception 'Kamu harus login dulu.';
+  end if;
+
+  if p_reported_id is null or not exists (select 1 from public.profiles where id = p_reported_id) then
+    raise exception 'Pengguna yang dilaporkan tidak ditemukan.';
+  end if;
+
+  if p_reported_id = v_uid then
+    raise exception 'Tidak bisa melaporkan diri sendiri.';
+  end if;
+
+  if p_reason is null or p_reason not in ('spam', 'penipuan', 'pelecehan', 'identitas_palsu', 'lainnya') then
+    raise exception 'Alasan laporan tidak dikenal.';
+  end if;
+
+  if v_detail is not null and char_length(v_detail) > 500 then
+    raise exception 'Detail laporan maksimal 500 karakter.';
+  end if;
+
+  -- Satu orang cuma bisa melaporkan orang yang sama sekali per 24 jam, supaya
+  -- tombol lapor tidak dipakai buat membanjiri antrean moderasi.
+  select count(*) into v_recent
+  from public.user_reports
+  where reporter_id = v_uid
+    and reported_id = p_reported_id
+    and created_at > now() - interval '24 hours';
+
+  if v_recent > 0 then
+    raise exception 'Kamu sudah melaporkan pengguna ini dalam 24 jam terakhir.';
+  end if;
+
+  insert into public.user_reports (reporter_id, reported_id, request_id, reason, detail)
+  values (v_uid, p_reported_id, p_request_id, p_reason, v_detail)
+  returning * into v_report;
+
+  return v_report;
+end;
+$$;
+
+create or replace function public.complete_help_request(p_request_id uuid)
+returns public.help_requests
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_request public.help_requests;
+  v_author_name text;
+begin
+  if v_uid is null then
+    raise exception 'Kamu harus login dulu.';
+  end if;
+
+  select * into v_request from public.help_requests where id = p_request_id for update;
+
+  if not found then
+    raise exception 'Request tidak ditemukan.';
+  end if;
+
+  if v_request.author_id <> v_uid then
+    raise exception 'Cuma pembuat request yang bisa mengonfirmasi bantuannya selesai.';
+  end if;
+
+  if v_request.status = 'completed' then
+    raise exception 'Request ini sudah dikonfirmasi selesai.';
+  end if;
+
+  if v_request.status <> 'accepted' or v_request.accepted_by is null then
+    raise exception 'Belum ada yang menerima request ini.';
+  end if;
+
+  update public.help_requests
+  set status = 'completed', completed_at = now()
+  where id = p_request_id
+  returning * into v_request;
+
+  -- Karma baru berpindah di sini, sekali saja, dikunci oleh status di atas.
+  insert into public.karma_history (user_id, request_id, title, karma_delta)
+  values (v_request.accepted_by, v_request.id, v_request.title, v_request.reward);
+
+  update public.profiles set karma = karma + v_request.reward where id = v_request.accepted_by;
+
+  select name into v_author_name from public.profiles where id = v_uid;
+
+  insert into public.notifications (user_id, type, title, data)
+  values (
+    v_request.accepted_by,
+    'karma_earned',
+    v_author_name || ' mengonfirmasi bantuanmu selesai. +' || v_request.reward || ' Karma',
+    jsonb_build_object('request_id', v_request.id, 'karma', v_request.reward)
+  );
+
+  return v_request;
+end;
+$$;
+
+create or replace function public.delete_help_request(p_request_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_request public.help_requests;
+begin
+  if v_uid is null then
+    raise exception 'Kamu harus login dulu.';
+  end if;
+
+  select * into v_request
+  from public.help_requests
+  where id = p_request_id
+  for update;
+
+  if not found then
+    raise exception 'Request tidak ditemukan.';
+  end if;
+
+  if v_request.author_id <> v_uid then
+    raise exception 'Cuma pembuat request yang bisa menghapusnya.';
+  end if;
+
+  if v_request.status <> 'open' then
+    raise exception 'Request yang sudah diterima tidak bisa dihapus.';
+  end if;
+
+  -- Lokasi dan chat ikut terhapus lewat foreign key on delete cascade.
+  delete from public.help_requests where id = p_request_id;
+end;
+$$;
+
 create or replace function public.redeem_reward(p_reward_id uuid)
 returns public.reward_redemptions
 language plpgsql
@@ -292,9 +586,10 @@ begin
 end;
 $$;
 
--- Kirim sinyal darurat, fan-out notifikasi ke semua tetangga (semua
--- profile lain). Return jumlah tetangga yang kena notifikasi.
-create or replace function public.send_panic_alert(p_message text default null)
+create or replace function public.send_panic_alert(
+  p_message text default null,
+  p_radius_m integer default 1000
+)
 returns integer
 language plpgsql
 security definer
@@ -304,40 +599,55 @@ declare
   v_uid uuid := auth.uid();
   v_alert_id uuid;
   v_sender_name text;
+  v_lat double precision;
+  v_lng double precision;
+  v_last timestamptz;
+  v_radius integer := least(greatest(coalesce(p_radius_m, 1000), 100), 5000);
   v_count integer;
 begin
   if v_uid is null then
     raise exception 'Kamu harus login dulu.';
   end if;
 
+  select lat, lng into v_lat, v_lng from public.user_locations where user_id = v_uid;
+  if v_lat is null then
+    raise exception 'Lokasi belum aktif. Izinkan akses lokasi dulu supaya tetangga terdekat bisa dikabari.';
+  end if;
+
+  select max(created_at) into v_last from public.panic_alerts where user_id = v_uid;
+  if v_last is not null and v_last > now() - interval '5 minutes' then
+    raise exception 'Sinyal darurat cuma bisa dikirim 1x per 5 menit. Coba lagi dalam % detik.',
+      ceil(extract(epoch from (v_last + interval '5 minutes' - now())))::integer;
+  end if;
+
   insert into public.panic_alerts (user_id, message)
-  values (v_uid, p_message)
+  values (v_uid, nullif(trim(coalesce(p_message, '')), ''))
   returning id into v_alert_id;
 
   select name into v_sender_name from public.profiles where id = v_uid;
 
   insert into public.notifications (user_id, type, title, data)
   select
-    p.id,
+    ul.user_id,
     'panic_alert',
-    v_sender_name || ' mengirim sinyal darurat! Cek sekitar kamu.',
-    jsonb_build_object('alert_id', v_alert_id, 'sender_id', v_uid)
-  from public.profiles p
-  where p.id <> v_uid;
+    -- Awalan [SIMULASI] wajib: tombol SOS di aplikasi masih latihan, jadi
+    -- penerima harus langsung tahu ini bukan keadaan darurat sungguhan.
+    '[SIMULASI] ' || v_sender_name || ' mengirim sinyal darurat latihan sekitar '
+      || round(public.haversine_m(v_lat, v_lng, ul.lat, ul.lng))::integer || 'm dari kamu',
+    jsonb_build_object('alert_id', v_alert_id, 'sender_id', v_uid, 'simulated', true)
+  from public.user_locations ul
+  where ul.user_id <> v_uid
+    and ul.updated_at > now() - interval '24 hours'
+    and public.haversine_m(v_lat, v_lng, ul.lat, ul.lng) <= v_radius;
 
   get diagnostics v_count = row_count;
   return v_count;
 end;
 $$;
 
--- Submit hasil verifikasi KTP (dipanggil setelah client upload foto KTU
--- & selfie ke Storage). Demo ini langsung set verified = true, meniru
--- alur "verifikasi instan" yang ada di UI.
-create or replace function public.submit_identity_verification(
-  p_nik text,
-  p_ktp_path text,
-  p_selfie_path text
-)
+drop function if exists public.submit_identity_verification(text, text, text);
+
+create or replace function public.submit_identity_verification()
 returns public.profiles
 language plpgsql
 security definer
@@ -351,39 +661,56 @@ begin
     raise exception 'Kamu harus login dulu.';
   end if;
 
-  if p_nik !~ '^\d{16}$' then
-    raise exception 'NIK harus 16 digit angka.';
-  end if;
-
-  insert into public.identity_verifications (user_id, nik, ktp_path, selfie_path, status)
-  values (v_uid, p_nik, p_ktp_path, p_selfie_path, 'verified')
+  insert into public.identity_verifications (user_id, status, simulated)
+  values (v_uid, 'verified', true)
   on conflict (user_id) do update
-    set nik = excluded.nik,
-        ktp_path = excluded.ktp_path,
-        selfie_path = excluded.selfie_path,
-        status = 'verified',
+    set status = 'verified',
+        simulated = true,
         created_at = now();
 
   update public.profiles set verified = true where id = v_uid
   returning * into v_profile;
 
   insert into public.notifications (user_id, type, title, data)
-  values (v_uid, 'identity_verified', 'Identitasmu berhasil diverifikasi. Selamat bergabung!', '{}'::jsonb);
+  values (v_uid, 'identity_verified', 'Verifikasi simulasi selesai. Selamat bergabung!', '{}'::jsonb);
 
   return v_profile;
 end;
 $$;
 
--- Grant execute ke role authenticated (default Supabase sudah begini utk
--- function baru, tapi kita eksplisit-kan biar jelas & aman).
+-- Hak akses tabel. Row level security saja tidak cukup: policy menyaring baris,
+-- tapi role tetap butuh privilege tabel, kalau tidak PostgREST menjawab
+-- 42501 "permission denied for table ...". Daftar di bawah persis mengikuti
+-- policy yang dibuat di bagian RLS.
+grant usage on schema public to anon, authenticated;
+
+grant select on public.profiles to authenticated;
+grant select on public.identity_verifications to authenticated;
+grant select on public.help_requests to authenticated;
+grant select on public.karma_history to authenticated;
+grant select on public.panic_alerts to authenticated;
+grant select on public.rewards to authenticated;
+grant select on public.reward_redemptions to authenticated;
+grant select on public.user_reports to authenticated;
+grant select, insert on public.chat_messages to authenticated;
+grant select, update on public.notifications to authenticated;
+
+-- help_request_locations dan user_locations sengaja tidak diberi grant sama
+-- sekali. Isinya cuma boleh disentuh function security definer.
+revoke all on public.help_request_locations from anon, authenticated;
+revoke all on public.user_locations from anon, authenticated;
+
 grant execute on function public.accept_help_request(uuid) to authenticated;
 grant execute on function public.redeem_reward(uuid) to authenticated;
-grant execute on function public.send_panic_alert(text) to authenticated;
-grant execute on function public.submit_identity_verification(text, text, text) to authenticated;
+grant execute on function public.send_panic_alert(text, integer) to authenticated;
+grant execute on function public.submit_identity_verification() to authenticated;
+grant execute on function public.set_my_location(double precision, double precision) to authenticated;
+grant execute on function public.create_help_request(text, text, text, double precision, double precision) to authenticated;
+grant execute on function public.nearby_help_requests(double precision, double precision, integer, integer) to authenticated;
+grant execute on function public.delete_help_request(uuid) to authenticated;
+grant execute on function public.complete_help_request(uuid) to authenticated;
+grant execute on function public.report_user(uuid, text, text, uuid) to authenticated;
 
--- ---------------------------------------------------------------------
--- 5. ROW LEVEL SECURITY
--- ---------------------------------------------------------------------
 alter table public.profiles enable row level security;
 alter table public.identity_verifications enable row level security;
 alter table public.help_requests enable row level security;
@@ -393,45 +720,39 @@ alter table public.notifications enable row level security;
 alter table public.panic_alerts enable row level security;
 alter table public.rewards enable row level security;
 alter table public.reward_redemptions enable row level security;
+alter table public.help_request_locations enable row level security;
+alter table public.user_locations enable row level security;
+alter table public.user_reports enable row level security;
 
--- profiles: semua user login boleh baca (buat nampilin nama/avatar
--- penulis request & leaderboard). Tidak ada policy insert/update/delete
--- untuk role authenticated — satu-satunya jalan masuk data adalah trigger
--- on_auth_user_created & function-function di atas (jalan sebagai owner
--- tabel, jadi otomatis lolos RLS).
 drop policy if exists "profiles_select_all" on public.profiles;
 create policy "profiles_select_all" on public.profiles
   for select to authenticated
   using (true);
 
--- identity_verifications: hanya pemilik baris yang boleh baca.
 drop policy if exists "identity_verifications_select_own" on public.identity_verifications;
 create policy "identity_verifications_select_own" on public.identity_verifications
   for select to authenticated
   using (user_id = auth.uid());
 
--- help_requests: feed publik buat semua user login. Insert hanya boleh
--- bikin request atas nama diri sendiri. Update status (accepted/completed)
--- HANYA lewat accept_help_request(), makanya tidak ada policy update di
--- sini untuk role authenticated.
 drop policy if exists "help_requests_select_all" on public.help_requests;
 create policy "help_requests_select_all" on public.help_requests
   for select to authenticated
   using (true);
 
 drop policy if exists "help_requests_insert_own" on public.help_requests;
-create policy "help_requests_insert_own" on public.help_requests
-  for insert to authenticated
-  with check (author_id = auth.uid());
 
--- karma_history: cuma pemilik baris yang boleh baca riwayatnya sendiri.
+-- Pelapor cuma bisa melihat laporannya sendiri. Orang yang dilaporkan tidak
+-- pernah tahu siapa yang melaporkannya, dan penulisan hanya lewat report_user().
+drop policy if exists "user_reports_select_own" on public.user_reports;
+create policy "user_reports_select_own" on public.user_reports
+  for select to authenticated
+  using (reporter_id = auth.uid());
+
 drop policy if exists "karma_history_select_own" on public.karma_history;
 create policy "karma_history_select_own" on public.karma_history
   for select to authenticated
   using (user_id = auth.uid());
 
--- chat_messages: hanya author request & yang menerima (accepted_by) yang
--- boleh baca/kirim pesan di request tersebut.
 drop policy if exists "chat_messages_select_participant" on public.chat_messages;
 create policy "chat_messages_select_participant" on public.chat_messages
   for select to authenticated
@@ -455,7 +776,6 @@ create policy "chat_messages_insert_participant" on public.chat_messages
     )
   );
 
--- notifications: cuma pemilik yang boleh baca & tandai sudah dibaca.
 drop policy if exists "notifications_select_own" on public.notifications;
 create policy "notifications_select_own" on public.notifications
   for select to authenticated
@@ -467,38 +787,36 @@ create policy "notifications_update_own" on public.notifications
   using (user_id = auth.uid())
   with check (user_id = auth.uid());
 
--- panic_alerts: cuma pemilik yang boleh baca alert miliknya. Insert hanya
--- lewat send_panic_alert().
 drop policy if exists "panic_alerts_select_own" on public.panic_alerts;
 create policy "panic_alerts_select_own" on public.panic_alerts
   for select to authenticated
   using (user_id = auth.uid());
 
--- rewards: katalog publik, semua user login boleh lihat. Tidak ada policy
--- insert/update/delete — kelola lewat Dashboard (pakai service role).
 drop policy if exists "rewards_select_all" on public.rewards;
 create policy "rewards_select_all" on public.rewards
   for select to authenticated
   using (true);
 
--- reward_redemptions: cuma pemilik yang boleh baca riwayat tukarnya.
 drop policy if exists "reward_redemptions_select_own" on public.reward_redemptions;
 create policy "reward_redemptions_select_own" on public.reward_redemptions
   for select to authenticated
   using (user_id = auth.uid());
 
--- ---------------------------------------------------------------------
--- 6. REALTIME — biar feed, chat, & notifikasi update otomatis tanpa
---    refresh (dipakai lewat supabase.channel(...).on('postgres_changes', ...))
--- ---------------------------------------------------------------------
-alter publication supabase_realtime add table public.help_requests;
-alter publication supabase_realtime add table public.chat_messages;
-alter publication supabase_realtime add table public.notifications;
+do $realtime$
+declare
+  v_table text;
+begin
+  foreach v_table in array array['help_requests', 'chat_messages', 'notifications'] loop
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = v_table
+    ) then
+      execute format('alter publication supabase_realtime add table public.%I', v_table);
+    end if;
+  end loop;
+end;
+$realtime$;
 
--- ---------------------------------------------------------------------
--- 7. SEED DATA — katalog reward default (boleh diubah/ditambah lewat
---    Table Editor kapan saja).
--- ---------------------------------------------------------------------
 insert into public.rewards (label, cost, icon)
 select * from (values
   ('Kopi Gratis di Kedai Kos', 500, 'Coffee'),
@@ -507,39 +825,6 @@ select * from (values
 ) as v(label, cost, icon)
 where not exists (select 1 from public.rewards);
 
--- ---------------------------------------------------------------------
--- 8. STORAGE — bucket privat buat foto KTP & selfie verifikasi.
---    Path file wajib berformat "{user_id}/ktp.jpg" & "{user_id}/selfie.jpg"
---    supaya policy di bawah bisa cocokin folder = auth.uid().
--- ---------------------------------------------------------------------
-insert into storage.buckets (id, name, public)
-values ('identity-docs', 'identity-docs', false)
-on conflict (id) do nothing;
-
 drop policy if exists "identity_docs_insert_own" on storage.objects;
-create policy "identity_docs_insert_own" on storage.objects
-  for insert to authenticated
-  with check (
-    bucket_id = 'identity-docs'
-    and (storage.foldername(name))[1] = auth.uid()::text
-  );
-
 drop policy if exists "identity_docs_select_own" on storage.objects;
-create policy "identity_docs_select_own" on storage.objects
-  for select to authenticated
-  using (
-    bucket_id = 'identity-docs'
-    and (storage.foldername(name))[1] = auth.uid()::text
-  );
-
 drop policy if exists "identity_docs_update_own" on storage.objects;
-create policy "identity_docs_update_own" on storage.objects
-  for update to authenticated
-  using (
-    bucket_id = 'identity-docs'
-    and (storage.foldername(name))[1] = auth.uid()::text
-  );
-
--- =====================================================================
--- SELESAI. Lanjut ke docs/SUPABASE_SETUP.md untuk isi .env.local & jalanin app.
--- =====================================================================

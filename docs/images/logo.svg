@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 180" width="640" height="180" role="img" aria-label="BantuIn">
+  <rect width="640" height="180" fill="#f8fafc"/>
+  <g transform="translate(48 46)">
+    <rect x="3" y="3" width="82" height="82" rx="16" fill="#171717"/>
+    <rect x="0" y="0" width="82" height="82" rx="16" fill="#3b82f6" stroke="#171717" stroke-width="4"/>
+    <g transform="translate(5.74 5.74) scale(2.9383)">
+      <g fill="#ffffff">
+      <rect x="4.6" y="6.3" width="1.7" height="1.7"/>
+      <rect x="6.2" y="6.3" width="1.7" height="1.7"/>
+      <rect x="7.8" y="6.3" width="1.7" height="1.7"/>
+      <rect x="9.4" y="6.3" width="1.7" height="1.7"/>
+      <rect x="4.6" y="7.9" width="1.7" height="1.7"/>
+      <rect x="11.0" y="7.9" width="1.7" height="1.7"/>
+      <rect x="4.6" y="9.5" width="1.7" height="1.7"/>
+      <rect x="11.0" y="9.5" width="1.7" height="1.7"/>
+      <rect x="4.6" y="11.1" width="1.7" height="1.7"/>
+      <rect x="6.2" y="11.1" width="1.7" height="1.7"/>
+      <rect x="7.8" y="11.1" width="1.7" height="1.7"/>
+      <rect x="9.4" y="11.1" width="1.7" height="1.7"/>
+      <rect x="4.6" y="12.7" width="1.7" height="1.7"/>
+      <rect x="11.0" y="12.7" width="1.7" height="1.7"/>
+      <rect x="4.6" y="14.3" width="1.7" height="1.7"/>
+      <rect x="11.0" y="14.3" width="1.7" height="1.7"/>
+      <rect x="4.6" y="15.9" width="1.7" height="1.7"/>
+      <rect x="6.2" y="15.9" width="1.7" height="1.7"/>
+      <rect x="7.8" y="15.9" width="1.7" height="1.7"/>
+      <rect x="9.4" y="15.9" width="1.7" height="1.7"/>
+      </g>
+      <g fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round">
+      <path d="M 15.29 9.21 A 3.8 3.8 0 0 1 15.29 14.59"/>
+      <path d="M 16.84 7.66 A 6 6 0 0 1 16.84 16.14"/>
+      </g>
+    </g>
+  </g>
+  <text x="160" y="88" font-family="Verdana, DejaVu Sans, sans-serif" font-size="46" font-weight="700" fill="#171717">Bantu<tspan fill="#2563eb">In</tspan></text>
+  <text x="162" y="122" font-family="Verdana, DejaVu Sans, sans-serif" font-size="18" fill="#64748b">Bantuan sekitar kosmu, dalam radius 3 km</text>
+</svg>

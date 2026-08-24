@@ -1,8 +1,18 @@
 import { category, formatHistoryDate, minutesSince, relativeTimeLabel } from "../constants";
-import type { AppUser, ChatMessage, HelpRequest, HistoryItem, LeaderboardEntry, NotificationItem, RewardItem } from "../types";
+import type {
+  AppUser,
+  ChatMessage,
+  HelpRequest,
+  HistoryItem,
+  LeaderboardEntry,
+  MyRequest,
+  NotificationItem,
+  RewardItem,
+} from "../types";
 import type {
   ChatMessageRow,
-  HelpRequestWithAuthor,
+  HelpRequestRow,
+  NearbyRequestRow,
   KarmaHistoryRow,
   NotificationRow,
   ProfileRow,
@@ -23,7 +33,7 @@ export function toAppUser(profile: ProfileRow, email: string): AppUser {
   };
 }
 
-export function toHelpRequest(row: HelpRequestWithAuthor): HelpRequest {
+export function toHelpRequest(row: NearbyRequestRow): HelpRequest {
   return {
     id: row.id,
     authorId: row.author_id,
@@ -32,19 +42,35 @@ export function toHelpRequest(row: HelpRequestWithAuthor): HelpRequest {
     urgency: row.urgency,
     category: category(row.urgency),
     distanceM: row.distance_m,
+    lat: row.request_lat,
+    lng: row.request_lng,
     postedMinAgo: minutesSince(row.created_at),
-    authorName: row.author.name,
-    authorColor: row.author.avatar_color,
-    authorInitial: row.author.name.charAt(0).toUpperCase() || "?",
-    authorVerified: row.author.verified,
+    authorName: row.author_name,
+    authorColor: row.author_color,
+    authorInitial: row.author_name.charAt(0).toUpperCase() || "?",
+    authorVerified: row.author_verified,
     reward: row.reward,
     icon: row.icon,
+    status: row.status,
     accepted: row.status !== "open",
+    completed: row.status === "completed",
     acceptedBy: row.accepted_by,
-    acceptorName: row.acceptor?.name ?? null,
-    acceptorColor: row.acceptor?.avatar_color ?? null,
-    acceptorInitial: row.acceptor ? row.acceptor.name.charAt(0).toUpperCase() || "?" : null,
-    acceptorVerified: row.acceptor?.verified ?? null,
+    acceptorName: row.acceptor_name,
+    acceptorColor: row.acceptor_color,
+    acceptorInitial: row.acceptor_name ? row.acceptor_name.charAt(0).toUpperCase() || "?" : null,
+    acceptorVerified: row.acceptor_verified,
+  };
+}
+
+export function toMyRequest(row: HelpRequestRow): MyRequest {
+  return {
+    id: row.id,
+    title: row.title,
+    urgency: row.urgency,
+    status: row.status,
+    reward: row.reward,
+    date: formatHistoryDate(row.created_at),
+    canDelete: row.status === "open",
   };
 }
 

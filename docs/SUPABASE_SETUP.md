@@ -24,15 +24,23 @@ Script ini otomatis membuat:
 - Semua tabel (`profiles`, `help_requests`, `karma_history`, `chat_messages`,
   `notifications`, `panic_alerts`, `rewards`, `reward_redemptions`,
   `identity_verifications`)
+  serta dua tabel lokasi (`help_request_locations`, `user_locations`)
 - Trigger yang otomatis bikin baris `profiles` tiap ada user baru daftar
-- 4 function RPC (`accept_help_request`, `redeem_reward`,
-  `send_panic_alert`, `submit_identity_verification`) yang menjalankan
-  logic karma & notifikasi secara atomik di server (jadi tidak bisa
-  dimanipulasi dari client)
-- Row Level Security (RLS) di semua tabel
+- Function RPC (`create_help_request`, `nearby_help_requests`,
+  `accept_help_request`, `redeem_reward`, `send_panic_alert`,
+  `set_my_location`, `submit_identity_verification`) yang menjalankan logic
+  karma, jarak, & notifikasi di server — jadi reward, status, dan koordinat
+  tidak bisa dikarang dari client
+- Row Level Security (RLS) di semua tabel. Dua tabel lokasi sengaja tanpa
+  policy sama sekali: koordinat tidak pernah bisa dibaca client, yang keluar
+  cuma jaraknya dalam meter
 - Realtime publication buat `help_requests`, `chat_messages`, `notifications`
-- Bucket Storage privat `identity-docs` buat foto KTP/selfie
 - Seed data katalog reward (Kopi Gratis, Voucher Cuci Baju, Badge Pahlawan Emas)
+
+Kalau kamu pernah menjalankan versi lama schema ini (yang masih menyimpan
+NIK & foto KTP), script sekarang otomatis membuang kolom-kolom itu. Hapus
+juga bucket Storage `identity-docs` beserta isinya lewat **Dashboard >
+Storage** supaya tidak ada sisa data KTP.
 
 ## 3. Matikan konfirmasi email (rekomendasi buat demo)
 
@@ -46,15 +54,42 @@ setelah daftar + verifikasi KTP instan), matikan ini:
 
 Kalau kamu tetap mengaktifkan konfirmasi email, alur register di app
 tetap jalan — user cuma akan diarahkan ke layar "Cek Email Kamu" dan
-baru bisa login setelah klik link konfirmasi.
+baru bisa login setelah klik link konfirmasi. Tapi kalau begitu, **URL
+tujuan link konfirmasinya harus dibereskan dulu**, lihat bagian berikutnya.
+
+## 3b. Atur URL redirect (wajib kalau konfirmasi email aktif)
+
+Link di email konfirmasi mengarahkan pengguna kembali ke aplikasi. Kalau
+alamat tujuannya salah, link-nya mendarat di halaman mati atau ditolak, dan
+pengguna kelihatan seperti "tidak terdaftar" padahal akunnya ada.
+
+Buka **Authentication** > **URL Configuration**, lalu:
+
+1. Set **Site URL** ke alamat yang benar-benar kamu pakai, misalnya
+   `http://localhost:3000` untuk development.
+2. Tambahkan semua alamat yang dipakai ke **Redirect URLs**, satu per baris:
+   ```
+   http://localhost:3000/**
+   https://domain-produksi-kamu/**
+   ```
+3. Save.
+
+App mengirim `emailRedirectTo` berisi origin tempat kamu mendaftar (lihat
+`signUp` di `app/_lib/supabase/mutations.ts`), jadi link konfirmasi selalu
+kembali ke host yang sama. Origin itu tetap harus ada di daftar **Redirect
+URLs** di atas, kalau tidak Supabase menolaknya.
+
+Kalau link-nya gagal, aplikasi sekarang menampilkan banner merah berisi alasan
+dari Supabase (kedaluwarsa, ditolak, dan seterusnya) di atas layar, bukan diam
+saja seperti sebelumnya.
 
 ## 4. Ambil URL & anon key
 
 1. **Project Settings** (ikon gear) > **API**.
 2. Copy **Project URL** dan **anon public** key.
-3. Di root repo, copy `.env.example` jadi `.env.local`:
+3. Di root repo, copy `.env.local.example` jadi `.env.local`:
    ```bash
-   cp .env.example .env.local
+   cp .env.local.example .env.local
    ```
 4. Isi `.env.local`:
    ```
@@ -70,23 +105,41 @@ pnpm install
 pnpm dev
 ```
 
-Buka `http://localhost:3000`. Klik **Daftar Sekarang**, isi data diri +
-upload foto KTP & selfie apa saja (untuk demo, sistem tidak benar-benar
-membaca isi foto — auto "terverifikasi" setelah upload). Setelah itu
-kamu otomatis masuk ke beranda dengan akun asli tersimpan di Supabase.
+Buka `http://localhost:3000`. Klik **Daftar Sekarang**, isi data diri, lalu
+jalankan langkah verifikasi (simulasi — tidak ada NIK atau foto KTP yang
+diminta). Setelah itu kamu masuk ke beranda dengan akun asli di Supabase.
+
+Lokasi memakai **GPS asli perangkat**: hook `app/_lib/useGeolocation.ts`
+memanggil `navigator.geolocation.watchPosition()`, jadi browser akan meminta izin
+lokasi saat pertama kali masuk. Browser hanya mengizinkan geolocation di
+*secure context*, yaitu `http://localhost` atau domain HTTPS — kalau app
+di-deploy lewat HTTP biasa, izin lokasi akan selalu ditolak. Jarak antar user,
+filter radius feed, dan radius sinyal darurat dihitung di server dari koordinat
+itu.
+
+Peta di panel detail request memakai Leaflet dengan tile OpenStreetMap. Titik
+request dikirim lewat kolom `request_lat` / `request_lng`, posisi kamu diambil
+dari GPS di browser, dan peta zoom otomatis ke kotak yang memuat keduanya. Isi
+`user_locations`, yaitu posisi terakhir tiap pengguna, tetap tidak pernah keluar
+dari database.
 
 ## 6. Cara kerja tiap fitur di balik layar
 
 | Fitur di UI | Tabel / function Supabase |
 | --- | --- |
 | Daftar akun | `auth.users` (Supabase Auth) + trigger `handle_new_user` → `profiles` |
-| Verifikasi KTP | Storage bucket `identity-docs` + `identity_verifications` + RPC `submit_identity_verification` |
-| Feed "Minta Bantuan" | tabel `help_requests` (baca semua, insert punya sendiri) |
-| Tombol "Terima" | RPC `accept_help_request` (atomik: ubah status, tambah karma, catat histori, kirim notifikasi ke pembuat request) |
+| Verifikasi identitas (simulasi) | RPC `submit_identity_verification` + tabel `identity_verifications` (tanpa data KYC apa pun) |
+| Feed "Minta Bantuan" | RPC `nearby_help_requests` (hitung jarak dari titik lokasi kamu, filter radius 3 km, kirim `request_lat`/`request_lng` untuk peta) |
+| Bikin request | RPC `create_help_request` (reward dihitung server, maksimal 5 request per jam, koordinat masuk `help_request_locations`) |
+| Tombol "Terima" | RPC `accept_help_request` (ubah status jadi `accepted` dan kirim notifikasi ke pembuat request; Karma belum dibayar) |
+| Tombol "Konfirmasi Bantuan Selesai" | RPC `complete_help_request` (atomik: status jadi `completed`, tambah karma penolong, catat histori, kirim notifikasi; cuma pembuat request, cuma sekali) |
+| Tombol bendera "Laporkan" | RPC `report_user` + tabel `user_reports` (1 laporan per pasangan pengguna per 24 jam, cuma pelapor yang bisa membacanya) |
+| Hapus request sendiri | RPC `delete_help_request` (cuma pemilik, cuma status `open`, lokasi & chat ikut cascade) |
+| Daftar "Request Kamu" di Profil | query `help_requests` difilter `author_id` |
 | Riwayat Bantuan | tabel `karma_history` |
 | Tukar Karma | RPC `redeem_reward` (cek karma cukup, kurangi karma, catat `reward_redemptions`) |
 | Papan Peringkat | query `profiles` diurutkan berdasarkan `karma` |
-| Tombol SOS | RPC `send_panic_alert` (catat `panic_alerts`, fan-out ke semua `notifications`) |
+| Tombol SOS | RPC `send_panic_alert` (catat `panic_alerts`, fan-out cuma ke user dalam radius 1 km, cooldown 5 menit per user). Judul notifikasinya diawali `[SIMULASI]` karena fiturnya masih berupa latihan |
 | Chat per request | tabel `chat_messages`, hanya bisa diakses pembuat request & yang menerima |
 | Panel Notifikasi | tabel `notifications`, realtime + tombol buka = tandai semua dibaca |
 
@@ -103,19 +156,38 @@ nama di `app/_lib/icons.ts` (`Coffee`, `Sparkles`, `Medal`, `Gift`, `Pill`,
 `Flame`, `Dog`, `BookOpen`, `Wifi`) — kalau mau ikon baru, tambahkan dulu
 import-nya di file itu.
 
-## 8. Keterbatasan yang disengaja (simplifikasi demo)
+## 8. Yang simulasi & yang asli
 
-- **Jarak (`distanceM`)**: masih angka acak seperti versi mock, belum
-  pakai geolocation asli. Kalau mau serius, tambah kolom `lat`/`lng` di
-  `help_requests` & `profiles`, lalu hitung jarak pakai PostGIS
-  (`earth_distance`) atau di client pakai Haversine formula.
-- **Login demo cepat** (tombol pilih akun dummy) dihapus karena tidak ada
-  lagi data dummy — semua user sekarang harus daftar beneran lewat
-  Supabase Auth.
-- **Verifikasi KTP** bersifat instan/kosmetik (tidak ada OCR/pengecekan
-  isi foto sungguhan), sama seperti perilaku versi mock aslinya — cuma
-  sekarang datanya benar-benar tersimpan di Storage & tabel
-  `identity_verifications`.
+**Simulasi:**
+- **Verifikasi identitas.** Tidak ada NIK, foto KTP, atau selfie yang diminta
+  maupun disimpan. Badge "terverifikasi" di UI adalah bagian dari simulasi
+  produk, bukan hasil KYC. Kalau suatu saat mau jadi produk sungguhan, pakai
+  penyedia verifikasi identitas resmi — jangan menampung KTP sendiri tanpa
+  memenuhi kewajiban UU PDP.
+- **Tombol SOS.** Notifikasinya nyata dan sampai ke perangkat tetangga dalam
+  radius 1 km, tapi ditandai `[SIMULASI]`. Tidak ada eskalasi atau penanganan
+  darurat sungguhan di baliknya.
+- **Katalog reward.** Karma benar-benar terpotong saat ditukar, tapi belum ada
+  alur klaim/fulfillment di dunia nyata.
+- **Moderasi laporan.** Laporan tersimpan sungguhan di `user_reports`, tapi
+  belum ada antarmuka untuk menindaklanjutinya. Baca lewat **Table Editor >
+  user_reports** di Supabase Dashboard.
+
+**Asli:**
+- **Lokasi.** Koordinat diambil dari GPS perangkat lewat Geolocation API
+  browser, lalu disimpan di `user_locations` / `help_request_locations` — dua
+  tabel yang RLS-nya aktif tanpa policy sama sekali, jadi tidak ada client yang
+  bisa membacanya.
+- **Perhitungan jarak.** Server menghitung jarak (haversine) dari koordinat
+  request. Yang dikirim ke browser adalah jaraknya dalam meter plus titik
+  request itu sendiri untuk peta.
+- **Keamanan.** RLS aktif di semua tabel, semua perubahan data lewat function
+  `security definer` yang memvalidasi `auth.uid()`, reward dihitung server,
+  ada rate limit request (5/jam) dan cooldown panic alert (5 menit).
+
+**Belum ada (kalau mau lanjut ke publik beneran):** penyelesaian request
+(karma masih dibayar saat request diterima, bukan saat selesai), laporan/blokir
+user, moderasi konten, dan halaman syarat & kebijakan privasi.
 
 ## 9. Troubleshooting
 
@@ -124,8 +196,26 @@ import-nya di file itu.
   di-restart setelah mengisi `.env.local` (env var cuma dibaca saat start).
 - **Login berhasil tapi data kosong / error 401 di console** → pastikan
   `supabase/schema.sql` sudah di-Run (khususnya bagian RLS policies).
+- **`permission denied for table profiles` (kode 42501, HTTP 403), atau banner
+  "Sesi kamu valid tapi profilnya gagal dimuat"** → role `authenticated` belum
+  punya privilege tabel. Row level security cuma menyaring baris; privilege
+  tabelnya terpisah. Jalankan ulang `supabase/schema.sql` — bagian
+  `grant select on public.profiles to authenticated;` dan seterusnya sekarang
+  sudah termasuk di sana.
 - **"new row violates row-level security policy"** saat bikin
   request/chat → pastikan kamu memanggil mutation dengan user yang lagi
   login (session aktif), bukan sebagai anon.
-- **Upload foto KTP gagal / 403** → cek bucket `identity-docs` sudah
-  terbuat (bagian 8 di `schema.sql`) dan policy storage sudah ke-apply.
+- **Jarak tidak muncul / bertuliskan "Lokasi belum aktif"** → baris request
+  lama dibuat sebelum tabel `help_request_locations` ada. Bikin request baru,
+  atau hapus request lama lewat Table Editor.
+- **"Sinyal darurat cuma bisa dikirim 1x per 5 menit"** → itu memang
+  cooldown-nya, bukan bug.
+- **Habis daftar, klik link di email, tapi akunnya seolah tidak terdaftar** →
+  hampir selalu soal URL. Cek **Authentication** > **URL Configuration**:
+  **Site URL** harus alamat yang kamu pakai dan origin-nya harus ada di
+  **Redirect URLs** (lihat bagian 3b). Banner merah di atas layar akan
+  menyebutkan alasan persisnya.
+- **"Email not confirmed" saat login** → akunnya ada, tapi link konfirmasinya
+  belum diklik. Buka link di email, atau matikan **Confirm email** (bagian 3).
+- **Link konfirmasi bilang kedaluwarsa** → link Supabase sekali pakai dan
+  berumur pendek. Daftar ulang untuk mendapat link baru.

@@ -1,8 +1,13 @@
 import { supabase } from "./client";
-import type { ChatMessageRow, HelpRequestWithAuthor, KarmaHistoryRow, NotificationRow, ProfileRow, RewardRow } from "./types";
-
-const REQUEST_SELECT =
-  "*, author:profiles!help_requests_author_id_fkey(id, name, avatar_color, verified), acceptor:profiles!help_requests_accepted_by_fkey(id, name, avatar_color, verified)";
+import type {
+  ChatMessageRow,
+  HelpRequestRow,
+  KarmaHistoryRow,
+  NearbyRequestRow,
+  NotificationRow,
+  ProfileRow,
+  RewardRow,
+} from "./types";
 
 export async function fetchProfile(userId: string): Promise<ProfileRow> {
   const { data, error } = await supabase.from("profiles").select("*").eq("id", userId).single();
@@ -10,23 +15,28 @@ export async function fetchProfile(userId: string): Promise<ProfileRow> {
   return data;
 }
 
-export async function fetchRequests(): Promise<HelpRequestWithAuthor[]> {
-  // Feed publik: semua request (open maupun sudah diterima) ditampilkan,
-  // sama seperti perilaku board aslinya — request yang sudah diterima
-  // tetap kelihatan dengan badge "Diterima", tidak hilang dari feed.
-  const { data, error } = await supabase
-    .from("help_requests")
-    .select(REQUEST_SELECT)
-    .order("created_at", { ascending: false })
-    .limit(100);
+export async function fetchNearbyRequests(
+  coords: { lat: number; lng: number } | null,
+  radiusM = 3000
+): Promise<NearbyRequestRow[]> {
+  const { data, error } = await supabase.rpc("nearby_help_requests", {
+    p_lat: coords?.lat ?? null,
+    p_lng: coords?.lng ?? null,
+    p_radius_m: radiusM,
+  });
   if (error) throw error;
-  return (data ?? []) as unknown as HelpRequestWithAuthor[];
+  return (data ?? []) as NearbyRequestRow[];
 }
 
-export async function fetchRequestById(requestId: string): Promise<HelpRequestWithAuthor> {
-  const { data, error } = await supabase.from("help_requests").select(REQUEST_SELECT).eq("id", requestId).single();
+export async function fetchMyRequests(userId: string): Promise<HelpRequestRow[]> {
+  const { data, error } = await supabase
+    .from("help_requests")
+    .select("*")
+    .eq("author_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(50);
   if (error) throw error;
-  return data as unknown as HelpRequestWithAuthor;
+  return data ?? [];
 }
 
 export async function fetchKarmaHistory(userId: string): Promise<KarmaHistoryRow[]> {

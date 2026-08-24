@@ -1,6 +1,20 @@
-import { Bell, Check, Clock3, Coins, Flame, MapPin, ShieldCheck, Siren, Sparkles, Users } from "lucide-react";
+import {
+  Bell,
+  Check,
+  Clock3,
+  Coins,
+  Flame,
+  Hourglass,
+  LoaderCircle,
+  MapPin,
+  ShieldCheck,
+  Siren,
+  Sparkles,
+  TriangleAlert,
+  Users,
+} from "lucide-react";
 import { AvatarBadge } from "./AvatarBadge";
-import { URGENCY_META, timeAgoLabel } from "../_lib/constants";
+import { URGENCY_META, distanceLabel, timeAgoLabel } from "../_lib/constants";
 import { DEFAULT_ICON, ICONS_BY_NAME } from "../_lib/icons";
 import { BORDER, PANEL, PRESS, SHADOW, SHADOW_SM } from "../_lib/ui";
 import type { AppUser, Category, HelpRequest } from "../_lib/types";
@@ -17,6 +31,8 @@ export function HomeScreen({
   onOpenNotifications,
   hasUnread,
   desktop,
+  locating,
+  locationError,
 }: {
   user: AppUser;
   karma: number;
@@ -29,10 +45,11 @@ export function HomeScreen({
   onOpenNotifications: () => void;
   hasUnread: boolean;
   desktop?: boolean;
+  locating: boolean;
+  locationError: string | null;
 }) {
   return (
     <div className="relative flex flex-1 flex-col overflow-hidden">
-      {/* Header */}
       <div className="shrink-0 bg-white dark:bg-slate-900 border-b-2 border-neutral-900 dark:border-neutral-100 px-5 pt-6 pb-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -66,15 +83,32 @@ export function HomeScreen({
           </div>
         </div>
 
-        <div className={`mt-4 flex items-center gap-2 rounded-md bg-blue-50 dark:bg-blue-950/40 px-3.5 py-2.5 border-2 border-blue-600 dark:border-blue-400`}>
-          <MapPin className="size-4 shrink-0 text-blue-700 dark:text-blue-400" />
-          <p className="text-xs font-medium text-blue-800 dark:text-blue-300">
-            Kos Melati, Jaksel: memantau radius <span className="font-bold">500m</span>
-          </p>
-        </div>
+        {locationError ? (
+          <div className="mt-4 flex items-center gap-2 rounded-md bg-amber-50 dark:bg-amber-950/40 px-3.5 py-2.5 border-2 border-amber-600 dark:border-amber-400">
+            <TriangleAlert className="size-4 shrink-0 text-amber-700 dark:text-amber-400" />
+            <p className="text-xs font-medium text-amber-800 dark:text-amber-300">{locationError}</p>
+          </div>
+        ) : (
+          <div className="mt-4 flex items-center gap-2 rounded-md bg-blue-50 dark:bg-blue-950/40 px-3.5 py-2.5 border-2 border-blue-600 dark:border-blue-400">
+            {locating ? (
+              <LoaderCircle className="size-4 shrink-0 animate-spin text-blue-700 dark:text-blue-400" />
+            ) : (
+              <MapPin className="size-4 shrink-0 text-blue-700 dark:text-blue-400" />
+            )}
+            <p className="text-xs font-medium text-blue-800 dark:text-blue-300">
+              {locating ? (
+                "Membaca lokasi kamu..."
+              ) : (
+                <>
+                  Memantau bantuan dalam radius <span className="font-bold">3 km</span> dari lokasi
+                  kamu sekarang
+                </>
+              )}
+            </p>
+          </div>
+        )}
       </div>
 
-      {/* Filter */}
       <div className="shrink-0 px-5 pt-4 pb-2">
         <div className={`grid grid-cols-2 gap-2 rounded-lg bg-neutral-100 dark:bg-slate-800 p-1 ${BORDER}`}>
           <button
@@ -102,10 +136,9 @@ export function HomeScreen({
         </div>
       </div>
 
-      {/* Feed */}
       <div
         className={`flex-1 overflow-y-auto px-5 pt-2 ${desktop ? "pb-8" : "pb-28"} ${
-          desktop ? "grid grid-cols-2 gap-3 content-start" : "space-y-3"
+          desktop ? "grid grid-cols-2 gap-3 content-start" : "mx-auto w-full max-w-2xl space-y-3"
         }`}
       >
         {requests.length === 0 && (
@@ -122,11 +155,16 @@ export function HomeScreen({
           </div>
         )}
         {requests.map((r) => (
-          <RequestCard key={r.id} request={r} onAccept={onAccept} onOpenDetail={onOpenDetail} />
+          <RequestCard
+            key={r.id}
+            request={r}
+            isOwn={r.authorId === user.id}
+            onAccept={onAccept}
+            onOpenDetail={onOpenDetail}
+          />
         ))}
       </div>
 
-      {/* Panic FAB */}
       <button
         onClick={onPanic}
         className={`absolute ${desktop ? "bottom-6" : "bottom-24"} right-5 z-30 flex items-center gap-2 rounded-lg bg-red-600 pl-3.5 pr-4 py-3 text-white ${BORDER} ${SHADOW} ${PRESS}`}
@@ -144,10 +182,12 @@ export function HomeScreen({
 
 function RequestCard({
   request,
+  isOwn,
   onAccept,
   onOpenDetail,
 }: {
   request: HelpRequest;
+  isOwn: boolean;
   onAccept: (id: string) => void;
   onOpenDetail: (r: HelpRequest) => void;
 }) {
@@ -198,23 +238,31 @@ function RequestCard({
             </div>
             <p className="flex items-center gap-0.5 text-[10px] text-neutral-500 dark:text-neutral-400">
               <MapPin className="size-2.5" />
-              {request.distanceM}m dari kamu
+              {distanceLabel(request.distanceM)}
             </p>
           </div>
         </div>
         <button
           onClick={() => onAccept(request.id)}
-          disabled={request.accepted}
+          disabled={request.accepted || isOwn}
           className={`flex items-center gap-1.5 rounded-md px-4 py-2 text-xs font-bold ${BORDER} ${PRESS} ${
             request.accepted
               ? "bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300"
-              : `bg-blue-600 text-white ${SHADOW_SM}`
+              : isOwn
+                ? "bg-neutral-100 dark:bg-slate-800 text-neutral-500 dark:text-neutral-400"
+                : `bg-blue-600 text-white ${SHADOW_SM}`
           }`}
         >
-          {request.accepted ? (
+          {request.completed ? (
             <>
-              <Check className="size-3.5" /> Diterima
+              <Check className="size-3.5" /> Selesai
             </>
+          ) : request.accepted ? (
+            <>
+              <Hourglass className="size-3.5" /> Dibantu
+            </>
+          ) : isOwn ? (
+            "Request Kamu"
           ) : (
             <>
               Terima

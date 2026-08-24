@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import { Geist, Geist_Mono, Jersey_10, Pixelify_Sans } from "next/font/google";
 import "./globals.css";
 
@@ -30,11 +31,18 @@ export const metadata: Metadata = {
     "Micro help board dan panic button untuk anak kos. Minta bantuan, kumpulin Karma Baik, dan bangun komunitas yang saling peduli dalam radius 500 meter.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+// Tema dibaca dari cookie di server, jadi kelas `dark` sudah menempel di HTML
+// pertama. Tidak perlu skrip inline anti-kedip, dan halaman tidak pernah tampil
+// sebentar dengan tema yang salah.
+export default async function RootLayout({ children }: LayoutProps<"/">) {
+  const dark = (await cookies()).get("theme")?.value === "dark";
+
   return (
     <html
       lang="id"
-      className={`${geistSans.variable} ${geistMono.variable} ${pixelifySans.variable} ${jersey10.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${pixelifySans.variable} ${jersey10.variable} h-full antialiased${
+        dark ? " dark" : ""
+      }`}
     >
       <body className="min-h-full flex flex-col">{children}</body>
     </html>

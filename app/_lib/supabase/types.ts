@@ -1,5 +1,3 @@
-// Tipe baris database, selaras dengan supabase/schema.sql.
-// Kalau kamu ubah schema.sql, update juga tipe-tipe ini.
 
 export type Urgency = "low" | "medium" | "high";
 export type RequestStatus = "open" | "accepted" | "completed";
@@ -31,16 +29,33 @@ export interface HelpRequestRow {
   urgency: Urgency;
   reward: number;
   icon: string;
-  distance_m: number;
   status: RequestStatus;
   accepted_by: string | null;
   accepted_at: string | null;
   created_at: string;
 }
 
-export interface HelpRequestWithAuthor extends HelpRequestRow {
-  author: ProfileSummary;
-  acceptor: ProfileSummary | null;
+export interface NearbyRequestRow {
+  id: string;
+  author_id: string;
+  title: string;
+  description: string;
+  urgency: Urgency;
+  reward: number;
+  icon: string;
+  status: RequestStatus;
+  accepted_by: string | null;
+  accepted_at: string | null;
+  created_at: string;
+  distance_m: number | null;
+  request_lat: number | null;
+  request_lng: number | null;
+  author_name: string;
+  author_color: string;
+  author_verified: boolean;
+  acceptor_name: string | null;
+  acceptor_color: string | null;
+  acceptor_verified: boolean | null;
 }
 
 export interface KarmaHistoryRow {

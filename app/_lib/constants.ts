@@ -36,14 +36,18 @@ export const AVATAR_COLORS = [
   "bg-lime-600",
 ];
 
+export function distanceLabel(m: number | null): string {
+  if (m === null) return "Lokasi belum aktif";
+  if (m < 1000) return `${m}m dari kamu`;
+  return `${(m / 1000).toFixed(1)} km dari kamu`;
+}
+
 export function timeAgoLabel(min: number): string {
   if (min < 1) return "Baru saja";
   if (min < 60) return `${min} menit lalu`;
   return `${Math.floor(min / 60)} jam lalu`;
 }
 
-// Dipakai untuk notifikasi, yang bisa berumur berhari-hari (beda dengan
-// request di feed yang selalu baru).
 export function relativeTimeLabel(iso: string): string {
   const diffMs = Date.now() - new Date(iso).getTime();
   const min = Math.floor(diffMs / 60000);
@@ -89,7 +93,3 @@ export function randomAvatarColor(seed: string): string {
 }
 
 export const category = (u: Urgency): Category => (u === "low" ? "daily" : "urgent");
-
-export function rewardForUrgency(u: Urgency): number {
-  return u === "high" ? 50 : u === "medium" ? 30 : 15;
-}

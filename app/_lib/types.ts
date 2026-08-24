@@ -5,6 +5,8 @@ export type IconType = ForwardRefExoticComponent<
 >;
 
 export type Urgency = "low" | "medium" | "high";
+export type RequestStatus = "open" | "accepted" | "completed";
+export type ReportReason = "spam" | "penipuan" | "pelecehan" | "identitas_palsu" | "lainnya";
 export type Category = "urgent" | "daily";
 export type Tab = "home" | "profile";
 
@@ -15,7 +17,10 @@ export interface HelpRequest {
   description: string;
   urgency: Urgency;
   category: Category;
-  distanceM: number;
+  distanceM: number | null;
+  /** Titik tempat request dibuat, dipakai untuk peta. */
+  lat: number | null;
+  lng: number | null;
   postedMinAgo: number;
   authorName: string;
   authorColor: string;
@@ -23,12 +28,24 @@ export interface HelpRequest {
   authorVerified: boolean;
   reward: number;
   icon: string;
+  status: RequestStatus;
   accepted: boolean;
+  completed: boolean;
   acceptedBy: string | null;
   acceptorName: string | null;
   acceptorColor: string | null;
   acceptorInitial: string | null;
   acceptorVerified: boolean | null;
+}
+
+export interface MyRequest {
+  id: string;
+  title: string;
+  urgency: Urgency;
+  status: RequestStatus;
+  reward: number;
+  date: string;
+  canDelete: boolean;
 }
 
 export interface HistoryItem {
