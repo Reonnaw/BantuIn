@@ -19,8 +19,6 @@ const ERRORS: Record<number, string> = {
   3: "Pencarian lokasi kelamaan. Coba lagi di tempat dengan sinyal lebih baik.",
 };
 
-// Dibulatkan ke 4 desimal (sekitar 11 meter) supaya pergerakan kecil tidak
-// memicu render ulang dan fetch feed terus menerus.
 const key = (c: Coords) => `${c.lat.toFixed(4)},${c.lng.toFixed(4)}`;
 
 const supported = () => typeof navigator !== "undefined" && "geolocation" in navigator;

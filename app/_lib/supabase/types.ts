@@ -16,6 +16,8 @@ export interface ProfileRow {
   karma: number;
   verified: boolean;
   is_new: boolean;
+  home_lat: number | null;
+  home_lng: number | null;
   created_at: string;
 }
 

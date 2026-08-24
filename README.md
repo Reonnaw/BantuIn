@@ -60,9 +60,47 @@ tinggal di jalan yang sama.
 
 ## Tampilan aplikasi
 
-| Layar sambutan | Pendaftaran | Masuk |
+### Masuk dan pendaftaran
+
+| Layar sambutan | Masuk | Daftar |
 | --- | --- | --- |
-| <img src="docs/images/welcome.png" alt="Layar sambutan BantuIn" width="240"> | <img src="docs/images/register.png" alt="Langkah pendaftaran BantuIn" width="240"> | <img src="docs/images/login.png" alt="Layar masuk BantuIn" width="240"> |
+| <img src="docs/images/01-welcome.png" alt="Layar sambutan" width="240"> | <img src="docs/images/12-masuk.png" alt="Masuk" width="240"> | <img src="docs/images/02-daftar.png" alt="Daftar" width="240"> |
+
+| Verifikasi simulasi | Akun siap dipakai |
+| --- | --- |
+| <img src="docs/images/03-verifikasi.png" alt="Verifikasi simulasi" width="240"> | <img src="docs/images/04-akun-siap.png" alt="Akun siap dipakai" width="240"> |
+
+### Feed bantuan
+
+| Beranda, tab Butuh Cepat | Tab Misi Harian | Buat request |
+| --- | --- | --- |
+| <img src="docs/images/05-beranda.png" alt="Beranda, tab Butuh Cepat" width="240"> | <img src="docs/images/13-misi-harian.png" alt="Tab Misi Harian" width="240"> | <img src="docs/images/06-buat-request.png" alt="Buat request" width="240"> |
+
+### Detail request
+
+| Detail dan peta | Menunggu konfirmasi | Konfirmasi selesai |
+| --- | --- | --- |
+| <img src="docs/images/07-detail-peta.png" alt="Detail dan peta" width="240"> | <img src="docs/images/08-menunggu-konfirmasi.png" alt="Menunggu konfirmasi" width="240"> | <img src="docs/images/09-konfirmasi-selesai.png" alt="Konfirmasi selesai" width="240"> |
+
+| Hapus request sendiri | Chat satu lawan satu | Lapor pengguna |
+| --- | --- | --- |
+| <img src="docs/images/14-hapus-request.png" alt="Hapus request sendiri" width="240"> | <img src="docs/images/11-chat.png" alt="Chat satu lawan satu" width="240"> | <img src="docs/images/10-lapor.png" alt="Lapor pengguna" width="240"> |
+
+### Profil, notifikasi, dan darurat
+
+| Profil dan Request Kamu | Riwayat, reward, peringkat | Panel notifikasi |
+| --- | --- | --- |
+| <img src="docs/images/17-profil.png" alt="Profil dan Request Kamu" width="240"> | <img src="docs/images/18-profil-reward.png" alt="Riwayat, reward, peringkat" width="240"> | <img src="docs/images/15-notifikasi.png" alt="Panel notifikasi" width="240"> |
+
+| Sinyal darurat | Mode gelap |
+| --- | --- |
+| <img src="docs/images/16-sos.png" alt="Sinyal darurat" width="240"> | <img src="docs/images/19-mode-gelap.png" alt="Mode gelap" width="240"> |
+
+### Tampilan desktop
+
+Pada lebar 1024 piksel ke atas, navigasi bawah berganti menjadi sidebar.
+
+<img src="docs/images/20-desktop.png" alt="Tampilan desktop" width="760">
 
 ## Teknologi yang digunakan
 
@@ -106,6 +144,10 @@ Kalau izin lokasi belum diberikan, peta cuma memusat ke titik request.
 Koordinat request dikirim lewat kolom `request_lat` dan `request_lng`. Posisi
 terakhir tiap pengguna, yang disimpan terpisah di `user_locations`, tetap tidak
 pernah keluar dari database.
+
+### Titik Kos untuk bikin request pas lagi jauh
+
+Titik Kos adalah lokasi tetap kos kamu yang disimpan di `profiles.home_lat` / `home_lng` lewat `set_home_location(lat, lng)` dari tab Profil. Atur Titik Kos saat kamu lagi di kos, lalu pas kamu lagi di luar lebih dari 100 meter, modal Minta Bantuan memunculkan pilihan **Lokasi Saya** / **Titik Kos**. Jika Titik Kos dipilih, `create_help_request(..., p_use_home=true)` mengambil koordinat kos dari profil dan mengecek jarak GPS kamu ke kos di server dengan `haversine_m`. Jika jarak di bawah 100 meter request ditolak, jadi tidak bisa minta tolong padahal lagi di kos. Titik Kos bisa diperbarui atau dihapus dari Profil.
 
 ### Hapus request sendiri
 
@@ -185,8 +227,10 @@ terpisah yang sama sekali tidak diberi policy, artinya tidak ada client yang
 bisa membacanya dalam kondisi apa pun. Dari `help_request_locations`, server
 membocorkan titik request ke tetangga di dalam radius karena memang di situlah
 bantuannya dibutuhkan; isi `user_locations` tidak pernah keluar sama sekali.
-Data identitas tidak dikumpulkan: langkah verifikasi bersifat simulasi dan tidak
-menyimpan NIK, foto KTP, maupun selfie.
+Titik Kos disimpan di `profiles.home_lat` / `home_lng` dan hanya dipakai server
+untuk membuat request di kos saat kamu lagi jauh. Data identitas tidak
+dikumpulkan: langkah verifikasi bersifat simulasi dan tidak menyimpan NIK, foto
+KTP, maupun selfie.
 
 ### Antarmuka responsif dengan tema yang tersimpan
 
@@ -282,19 +326,23 @@ pnpm lint    # menjalankan ESLint
 3. Izinkan akses lokasi saat browser bertanya. Feed beranda menampilkan request
    dari tetangga, diurutkan berdasarkan jarak, terbagi ke tab **Butuh Cepat**
    dan **Misi Harian**.
-4. Tekan tombol tambah untuk membuat request, pilih tingkat urgensi, lalu
-   kirim. Nilai Karma-nya ditentukan server.
-5. Tekan **Terima** pada request milik orang lain untuk mengambilnya dan
+4. Buka tab **Profil** lalu atur **Titik Kos** saat kamu lagi di kos. Titik ini
+   dipakai untuk bikin request pas kamu lagi jauh.
+5. Tekan tombol tambah untuk membuat request, pilih tingkat urgensi dan
+   **Titik Bantuan** (Lokasi Saya atau Titik Kos jika sudah diatur dan kamu
+   lagi jauh lebih dari 100 meter), lalu kirim. Nilai Karma ditentukan server.
+6. Tekan **Terima** pada request milik orang lain untuk mengambilnya dan
    mendapat Karma. Request buatan sendiri bertuliskan **Request Kamu** dan
    tidak bisa diterima.
-6. Buka sebuah request untuk melihat detail, jarak, peta OpenStreetMap yang
+7. Buka sebuah request untuk melihat detail, jarak, peta OpenStreetMap yang
    menunjuk titik tempat request itu dibuat, dan tombol chat yang muncul untuk
    kedua pihak yang terlibat.
-7. Request buatan sendiri yang belum diterima bisa dihapus lewat tombol
+8. Request buatan sendiri yang belum diterima bisa dihapus lewat tombol
    **Hapus Request Ini** di panel detailnya.
-8. Tekan tombol merah **SOS** untuk menjalankan simulasi sinyal darurat.
-9. Buka tab **Profil** untuk melihat level Karma, daftar **Request Kamu**,
-   riwayat bantuan, papan peringkat, katalog reward, dan tombol ganti tema.
+9. Tekan tombol merah **SOS** untuk menjalankan simulasi sinyal darurat.
+10. Buka tab **Profil** untuk melihat level Karma, daftar **Request Kamu**,
+    riwayat bantuan, papan peringkat, katalog reward, status Titik Kos, dan
+    tombol ganti tema.
 
 ## Struktur proyek
 
@@ -317,17 +365,17 @@ app/
     AvatarBadge.tsx         Avatar inisial
     Logo.tsx                Logo dan lockup
   _lib/
-    constants.ts            Metadata urgensi, tingkatan Karma, format teks
-    types.ts                Tipe untuk lapisan UI
+    constants.ts            Metadata urgensi, tingkatan Karma, `HOME_NEAR_THRESHOLD_M`, `haversineM`, format teks
+    types.ts                Tipe untuk lapisan UI termasuk `homeLat` / `homeLng`
     icons.ts                Pemetaan nama ikon ke komponen
     useIsDesktop.ts         Hook breakpoint lebar layar
     useGeolocation.ts       Hook GPS perangkat lewat Geolocation API
     supabase/
       client.ts             Klien Supabase untuk browser
       queries.ts            Jalur baca
-      mutations.ts          Jalur tulis, semuanya lewat RPC
+      mutations.ts          Jalur tulis via RPC termasuk `set_home_location`, `clear_home_location`
       adapters.ts           Konversi baris database ke model UI
-      types.ts              Tipe baris database
+      types.ts              Tipe baris database termasuk `home_lat` / `home_lng`
 supabase/
   schema.sql                Tabel, policy, function, data awal
 docs/
@@ -346,11 +394,13 @@ ditentukan server.
 | Daftar akun | `auth.users` dan trigger `handle_new_user` yang membuat baris `profiles` |
 | Verifikasi identitas | `submit_identity_verification()` |
 | Menyimpan posisi saat ini | `set_my_location(lat, lng)`, diisi dari GPS perangkat |
+| Atur Titik Kos | `set_home_location(lat, lng)` dan `clear_home_location()` , disimpan di `profiles.home_lat` / `home_lng` |
 | Memuat feed | `nearby_help_requests(lat, lng, radius, limit)` |
 | Peta detail request | Kolom `request_lat` dan `request_lng` dari `nearby_help_requests` |
 | Hapus request sendiri | `delete_help_request(request_id)` |
 | Daftar request sendiri | Query `help_requests` difilter `author_id` |
-| Membuat request | `create_help_request(title, description, urgency, lat, lng)` |
+| Membuat request | `create_help_request(title, description, urgency, lat, lng, p_use_home)` |
+| Membuat request di Titik Kos | `create_help_request(..., p_use_home=true)` pakai Titik Kos + cek `haversine_m` >100m, ditolak jika masih dekat |
 | Menerima request | `accept_help_request(request_id)` |
 | Menukar reward | `redeem_reward(reward_id)` |
 | Tombol darurat | `send_panic_alert(message, radius)`, notifikasinya diawali `[SIMULASI]` |
@@ -367,10 +417,8 @@ Aturan sisi server yang tidak bisa dilewati antarmuka:
   `open`.
 - Sinyal darurat bisa dikirim sekali per lima menit dan hanya sampai ke akun di
   dalam radius satu kilometer.
-- Koordinat disimpan di `help_request_locations` dan `user_locations`, keduanya
-  mengaktifkan row level security tanpa policy sama sekali, jadi tidak bisa
-  dibaca langsung dari client. Yang keluar ke browser hanya jarak dalam meter
-  dan titik request-nya sendiri.
+- Request di Titik Kos hanya bisa dibuat jika Titik Kos sudah diatur dan jarak GPS kamu ke Titik Kos lebih dari 100 meter, divalidasi di `create_help_request` di server.
+- Koordinat disimpan di `help_request_locations` dan `user_locations` tanpa policy, dan di `profiles.home_lat` / `home_lng`. Yang keluar ke browser hanya jarak dalam meter dan titik request-nya sendiri.
 
 ## Bagian simulasi dan bagian nyata
 
@@ -413,7 +461,11 @@ Nyata:
   Belum ada tombol batalkan.
 - Titik request terlihat persis oleh siapa pun di dalam radius tiga kilometer.
   Itu memang tujuannya supaya penolong bisa datang, tapi artinya lokasi kos
-  pembuat request ikut terbaca.
+  pembuat request ikut terbaca. Hal yang sama berlaku untuk request yang dibuat
+  lewat Titik Kos.
+- Titik Kos butuh GPS aktif untuk menghitung jaraknya. Cek jarak lebih dari
+  100 meter dijalankan di server, jadi tidak bisa di-bypass dari client. Tanpa
+  Titik Kos, pilihan Titik Kos di modal tidak muncul.
 - Laporan pengguna tersimpan di `user_reports` tapi belum ada antarmuka
   moderasi. Untuk sekarang laporannya dibaca lewat Table Editor di Supabase
   Dashboard. Blokir pengguna dan moderasi teks request maupun chat juga belum

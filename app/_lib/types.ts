@@ -18,7 +18,6 @@ export interface HelpRequest {
   urgency: Urgency;
   category: Category;
   distanceM: number | null;
-  /** Titik tempat request dibuat, dipakai untuk peta. */
   lat: number | null;
   lng: number | null;
   postedMinAgo: number;
@@ -65,6 +64,8 @@ export interface AppUser {
   karma: number;
   verified: boolean;
   isNew: boolean;
+  homeLat: number | null;
+  homeLng: number | null;
 }
 
 export interface LeaderboardEntry {

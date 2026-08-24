@@ -8,29 +8,59 @@ import {
   Coins,
   Gift,
   History,
+  Home,
   LoaderCircle,
   LogOut,
+  MapPin,
   Medal,
   Megaphone,
   Moon,
+  Navigation,
   ShieldCheck,
   Sun,
   Trash2,
   Trophy,
 } from "lucide-react";
 import { AvatarBadge } from "./AvatarBadge";
-import { URGENCY_META, karmaTier, karmaTierByLevel } from "../_lib/constants";
+import {
+  HOME_NEAR_THRESHOLD_M,
+  URGENCY_META,
+  haversineM,
+  karmaTier,
+  karmaTierByLevel,
+} from "../_lib/constants";
 import { DEFAULT_ICON, ICONS_BY_NAME } from "../_lib/icons";
 import { fetchLeaderboard, fetchRewards } from "../_lib/supabase/queries";
 import { redeemReward as redeemRewardMutation } from "../_lib/supabase/mutations";
 import { toLeaderboardEntry, toRewardItem } from "../_lib/supabase/adapters";
 import { BORDER, PANEL, PRESS, SHADOW, SHADOW_SM } from "../_lib/ui";
-import type { AppUser, HistoryItem, LeaderboardEntry, MyRequest, RewardItem } from "../_lib/types";
+import type {
+  AppUser,
+  HistoryItem,
+  LeaderboardEntry,
+  MyRequest,
+  RewardItem,
+} from "../_lib/types";
 
-const REQUEST_STATUS: Record<MyRequest["status"], { label: string; className: string }> = {
-  open: { label: "Menunggu bantuan", className: "bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border-blue-600 dark:border-blue-400" },
-  accepted: { label: "Sedang dibantu", className: "bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border-emerald-600 dark:border-emerald-400" },
-  completed: { label: "Selesai", className: "bg-neutral-100 dark:bg-slate-800 text-neutral-600 dark:text-neutral-300 border-neutral-400" },
+const REQUEST_STATUS: Record<
+  MyRequest["status"],
+  { label: string; className: string }
+> = {
+  open: {
+    label: "Menunggu bantuan",
+    className:
+      "bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border-blue-600 dark:border-blue-400",
+  },
+  accepted: {
+    label: "Sedang dibantu",
+    className:
+      "bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border-emerald-600 dark:border-emerald-400",
+  },
+  completed: {
+    label: "Selesai",
+    className:
+      "bg-neutral-100 dark:bg-slate-800 text-neutral-600 dark:text-neutral-300 border-neutral-400",
+  },
 };
 
 export function ProfileScreen({
@@ -44,6 +74,12 @@ export function ProfileScreen({
   dark,
   onToggleDark,
   onKarmaChange,
+  coords,
+  locating,
+  locationError,
+  savingHome,
+  onSaveHome,
+  onClearHome,
 }: {
   user: AppUser;
   karma: number;
@@ -55,6 +91,12 @@ export function ProfileScreen({
   dark: boolean;
   onToggleDark: () => void;
   onKarmaChange: (delta: number, message: string) => void;
+  coords: { lat: number; lng: number } | null;
+  locating: boolean;
+  locationError: string | null;
+  savingHome: boolean;
+  onSaveHome: () => void;
+  onClearHome: () => void;
 }) {
   const [rewards, setRewards] = useState<RewardItem[]>([]);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
@@ -63,11 +105,13 @@ export function ProfileScreen({
 
   useEffect(() => {
     let active = true;
-    Promise.all([fetchRewards(), fetchLeaderboard(user.id)]).then(([rewardRows, boardRows]) => {
-      if (!active) return;
-      setRewards(rewardRows.map(toRewardItem));
-      setLeaderboard(boardRows.map(toLeaderboardEntry));
-    });
+    Promise.all([fetchRewards(), fetchLeaderboard(user.id)]).then(
+      ([rewardRows, boardRows]) => {
+        if (!active) return;
+        setRewards(rewardRows.map(toRewardItem));
+        setLeaderboard(boardRows.map(toLeaderboardEntry));
+      },
+    );
     return () => {
       active = false;
     };
@@ -77,14 +121,21 @@ export function ProfileScreen({
   const nextTier = karmaTierByLevel(tier.level + 1);
   const progressPct = Math.min(
     100,
-    Math.round(((karma - tier.floor) / (tier.next - tier.floor)) * 100)
+    Math.round(((karma - tier.floor) / (tier.next - tier.floor)) * 100),
   );
 
   const board = useMemo(() => {
     const others = leaderboard.filter((p) => p.id !== user.id);
-    return [...others, { id: user.id, name: "Kamu", karma, initial: user.initial, color: user.color }].sort(
-      (a, b) => b.karma - a.karma
-    );
+    return [
+      ...others,
+      {
+        id: user.id,
+        name: "Kamu",
+        karma,
+        initial: user.initial,
+        color: user.color,
+      },
+    ].sort((a, b) => b.karma - a.karma);
   }, [leaderboard, karma, user]);
 
   const handleRedeem = async (reward: RewardItem) => {
@@ -94,16 +145,32 @@ export function ProfileScreen({
       await redeemRewardMutation(reward.id);
       onKarmaChange(-reward.cost, `Ditukar! ${reward.label} siap dipakai.`);
     } catch (err) {
-      onKarmaChange(0, err instanceof Error ? err.message : "Gagal menukar reward.");
+      onKarmaChange(
+        0,
+        err instanceof Error ? err.message : "Gagal menukar reward.",
+      );
     } finally {
       setRedeemingId(null);
     }
   };
 
+  const homeSet = user.homeLat !== null && user.homeLng !== null;
+  const distToHome =
+    coords && homeSet
+      ? Math.round(
+          haversineM(coords.lat, coords.lng, user.homeLat!, user.homeLng!),
+        )
+      : null;
+  const isNearHome = distToHome !== null && distToHome < HOME_NEAR_THRESHOLD_M;
+
   return (
-    <div className={`flex-1 overflow-y-auto px-5 ${desktop ? "pb-8" : "mx-auto w-full max-w-2xl pb-28"} pt-6`}>
+    <div
+      className={`flex-1 overflow-y-auto px-5 ${desktop ? "pb-8" : "mx-auto w-full max-w-2xl pb-28"} pt-6`}
+    >
       <div className="mb-4 flex items-center justify-between">
-        <h1 className="font-pixel text-base text-neutral-900 dark:text-neutral-50">Profil Kamu</h1>
+        <h1 className="font-pixel text-base text-neutral-900 dark:text-neutral-50">
+          Profil Kamu
+        </h1>
         <div className="flex items-center gap-2">
           {!desktop && (
             <button
@@ -124,18 +191,30 @@ export function ProfileScreen({
         </div>
       </div>
 
-      <div className={desktop ? "grid grid-cols-2 gap-5 items-start" : "space-y-6"}>
+      <div
+        className={desktop ? "grid grid-cols-2 gap-5 items-start" : "space-y-6"}
+      >
         <div className="space-y-4">
-          <div className={`flex items-center gap-3 rounded-lg ${PANEL} p-3.5 ${SHADOW_SM}`}>
-            <AvatarBadge initial={user.initial} color={user.color} size="size-12" />
+          <div
+            className={`flex items-center gap-3 rounded-lg ${PANEL} p-3.5 ${SHADOW_SM}`}
+          >
+            <AvatarBadge
+              initial={user.initial}
+              color={user.color}
+              size="size-12"
+            />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5">
                 <p className="truncate text-sm font-bold text-neutral-900 dark:text-neutral-50">
                   {user.name}
                 </p>
-                {user.verified && <ShieldCheck className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />}
+                {user.verified && (
+                  <ShieldCheck className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                )}
               </div>
-              <p className="truncate text-xs text-neutral-500 dark:text-neutral-400">{user.role}</p>
+              <p className="truncate text-xs text-neutral-500 dark:text-neutral-400">
+                {user.role}
+              </p>
             </div>
             {user.verified && (
               <span className="shrink-0 rounded-md bg-emerald-50 dark:bg-emerald-950/50 px-2.5 py-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 border-2 border-emerald-600 dark:border-emerald-400">
@@ -144,7 +223,9 @@ export function ProfileScreen({
             )}
           </div>
 
-          <div className={`rounded-lg bg-blue-600 p-5 text-white ${BORDER} ${SHADOW}`}>
+          <div
+            className={`rounded-lg bg-blue-600 p-5 text-white ${BORDER} ${SHADOW}`}
+          >
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-xs font-medium text-blue-100">Karma Baik</p>
@@ -154,10 +235,12 @@ export function ProfileScreen({
               </div>
               <div className="flex items-center gap-1.5 rounded-md bg-blue-700 border-2 border-white/40 px-3 py-1.5">
                 <Award className="size-3.5" />
-                <span className="text-[11px] font-bold">Level {tier.level}</span>
+                <span className="text-[11px] font-bold">
+                  Level {tier.level}
+                </span>
               </div>
             </div>
-            <p className="mt-2 text-sm font-bold">{tier.title} Kos</p>
+            <p className="mt-2 text-sm font-bold">{tier.title}</p>
 
             <div className="mt-4">
               <div className="mb-1.5 flex items-center justify-between text-[11px] font-medium text-blue-100">
@@ -171,14 +254,133 @@ export function ProfileScreen({
                 />
               </div>
               <p className="mt-1.5 text-[11px] text-blue-100">
-                {tier.next - karma > 0 ? `${tier.next - karma} Karma lagi` : "Level maksimal tercapai!"}
+                {tier.next - karma > 0
+                  ? `${tier.next - karma} Karma lagi`
+                  : "Level maksimal tercapai!"}
               </p>
             </div>
           </div>
 
+          <div className={`rounded-lg ${PANEL} p-4 ${SHADOW_SM}`}>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <div
+                  className={`flex size-8 items-center justify-center rounded-md bg-blue-50 dark:bg-blue-950/50 border-2 border-blue-600 dark:border-blue-400`}
+                >
+                  <Home className="size-4 text-blue-600 dark:text-blue-400" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-neutral-900 dark:text-neutral-50">
+                    Titik Kos
+                  </p>
+                  <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                    Bikin request pas lagi di luar
+                  </p>
+                </div>
+              </div>
+              {homeSet && (
+                <span className="shrink-0 rounded-md bg-emerald-50 dark:bg-emerald-950/50 px-2 py-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 border-2 border-emerald-600 dark:border-emerald-400">
+                  Sudah diatur
+                </span>
+              )}
+            </div>
+
+            {homeSet ? (
+              <>
+                <div className="mt-3 flex items-center gap-1.5 rounded-md bg-neutral-50 dark:bg-slate-900 px-3 py-2 border-2 border-neutral-200 dark:border-slate-700">
+                  <MapPin className="size-3.5 shrink-0 text-neutral-500" />
+                  <span className="text-[11px] font-mono text-neutral-700 dark:text-neutral-300">
+                    {user.homeLat!.toFixed(5)}, {user.homeLng!.toFixed(5)}
+                  </span>
+                </div>
+                {distToHome !== null ? (
+                  <p
+                    className={`mt-2 text-[11px] font-medium ${isNearHome ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}`}
+                  >
+                    {isNearHome
+                      ? `Kamu lagi di kos (${distToHome}m)`
+                      : `Kamu ${distToHome}m dari kos bisa pakai Titik Kos pas bikin request`}
+                  </p>
+                ) : locating ? (
+                  <p className="mt-2 text-[11px] text-neutral-500 dark:text-neutral-400">
+                    Membaca jarak ke kos...
+                  </p>
+                ) : locationError ? (
+                  <p className="mt-2 text-[11px] text-amber-700 dark:text-amber-300">
+                    Aktifkan lokasi untuk lihat jarak ke kos.
+                  </p>
+                ) : null}
+                <div className="mt-3 flex gap-2">
+                  <button
+                    onClick={onSaveHome}
+                    disabled={savingHome || !coords}
+                    className={`flex-1 rounded-md px-3 py-2 text-[11px] font-bold ${BORDER} ${PRESS} ${coords ? "bg-blue-600 text-white" : "bg-neutral-100 dark:bg-slate-800 text-neutral-400"}`}
+                  >
+                    {savingHome ? (
+                      <LoaderCircle className="mx-auto size-3.5 animate-spin" />
+                    ) : (
+                      "Perbarui ke Lokasi Saat Ini"
+                    )}
+                  </button>
+                  <button
+                    onClick={onClearHome}
+                    disabled={savingHome}
+                    className={`rounded-md px-3 py-2 text-[11px] font-bold bg-white dark:bg-slate-800 text-red-600 dark:text-red-400 ${BORDER} ${PRESS}`}
+                  >
+                    Hapus
+                  </button>
+                </div>
+                <p className="mt-2 text-[10px] leading-snug text-neutral-500 dark:text-neutral-400">
+                  Atur pas kamu lagi di kos. Nanti pas di kampus/kampus
+                  &gt;100m, pakai Titik Kos saat bikin request.
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="mt-3 rounded-md bg-amber-50 dark:bg-amber-950/30 px-3 py-2.5 border-2 border-amber-600 dark:border-amber-400">
+                  <p className="text-[11px] font-semibold text-amber-800 dark:text-amber-300">
+                    Belum diatur
+                  </p>
+                  <p className="mt-0.5 text-[11px] leading-snug text-amber-700 dark:text-amber-300">
+                    Pas kamu lagi di kos, tekan di bawah. Nanti kalau kamu di
+                    luar, request bakal muncul di titik kos (bukan di kampus).
+                  </p>
+                </div>
+                {locationError ? (
+                  <p className="mt-2 text-[11px] text-red-600 dark:text-red-400">
+                    {locationError}
+                  </p>
+                ) : locating ? (
+                  <p className="mt-2 flex items-center gap-1 text-[11px] text-neutral-500 dark:text-neutral-400">
+                    <LoaderCircle className="size-3 animate-spin" /> Membaca
+                    lokasi...
+                  </p>
+                ) : null}
+                <button
+                  onClick={onSaveHome}
+                  disabled={savingHome || !coords}
+                  className={`mt-3 w-full rounded-md px-4 py-2.5 text-xs font-bold ${BORDER} ${PRESS} ${SHADOW_SM} ${coords ? "bg-blue-600 text-white" : "bg-neutral-100 dark:bg-slate-800 text-neutral-400"}`}
+                >
+                  {savingHome ? (
+                    <LoaderCircle className="mx-auto size-4 animate-spin" />
+                  ) : (
+                    <>
+                      <Navigation className="mr-1.5 inline size-3.5" /> Simpan
+                      Lokasi Saat Ini sebagai Titik Kos
+                    </>
+                  )}
+                </button>
+              </>
+            )}
+          </div>
+
           <div className="grid grid-cols-3 gap-2.5">
             {[
-              { label: "Misi Selesai", value: String(history.length), icon: Trophy },
+              {
+                label: "Misi Selesai",
+                value: String(history.length),
+                icon: Trophy,
+              },
               {
                 label: "Peringkat",
                 value: `#${board.findIndex((p) => p.id === user.id) + 1}`,
@@ -186,7 +388,10 @@ export function ProfileScreen({
               },
               { label: "Lencana", value: user.isNew ? "0" : "5", icon: Award },
             ].map((s) => (
-              <div key={s.label} className={`flex flex-col items-center gap-1.5 rounded-lg ${PANEL} p-3.5 ${SHADOW_SM}`}>
+              <div
+                key={s.label}
+                className={`flex flex-col items-center gap-1.5 rounded-lg ${PANEL} p-3.5 ${SHADOW_SM}`}
+              >
                 <s.icon className="size-4 text-blue-600 dark:text-blue-400" />
                 <p className="font-score text-xl leading-none text-neutral-900 dark:text-neutral-50">
                   {s.value}
@@ -202,11 +407,15 @@ export function ProfileScreen({
         <div className="space-y-6">
           <div>
             <div className="mb-2.5 flex items-center justify-between">
-              <h2 className="text-sm font-bold text-neutral-900 dark:text-neutral-50">Request Kamu</h2>
+              <h2 className="text-sm font-bold text-neutral-900 dark:text-neutral-50">
+                Request Kamu
+              </h2>
               <Megaphone className="size-4 text-neutral-400" />
             </div>
             {myRequests.length === 0 ? (
-              <div className={`rounded-lg ${PANEL} p-5 text-center ${SHADOW_SM}`}>
+              <div
+                className={`rounded-lg ${PANEL} p-5 text-center ${SHADOW_SM}`}
+              >
                 <p className="text-xs font-semibold text-neutral-600 dark:text-neutral-300">
                   Kamu belum pernah minta bantuan
                 </p>
@@ -221,7 +430,10 @@ export function ProfileScreen({
                   const status = REQUEST_STATUS[r.status];
                   const confirming = confirmDeleteId === r.id;
                   return (
-                    <div key={r.id} className={`rounded-lg ${PANEL} p-3.5 ${SHADOW_SM}`}>
+                    <div
+                      key={r.id}
+                      className={`rounded-lg ${PANEL} p-3.5 ${SHADOW_SM}`}
+                    >
                       <div className="flex items-start gap-2">
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-xs font-bold text-neutral-800 dark:text-neutral-100">
@@ -235,9 +447,15 @@ export function ProfileScreen({
                         {r.canDelete && (
                           <button
                             onClick={() =>
-                              confirming ? onDeleteRequest(r.id) : setConfirmDeleteId(r.id)
+                              confirming
+                                ? onDeleteRequest(r.id)
+                                : setConfirmDeleteId(r.id)
                             }
-                            aria-label={confirming ? "Konfirmasi hapus request" : "Hapus request"}
+                            aria-label={
+                              confirming
+                                ? "Konfirmasi hapus request"
+                                : "Hapus request"
+                            }
                             className={`flex shrink-0 items-center gap-1 rounded-md px-2 py-1.5 text-[10px] font-bold ${BORDER} ${PRESS} ${
                               confirming
                                 ? "bg-red-600 text-white"
@@ -270,11 +488,15 @@ export function ProfileScreen({
 
           <div>
             <div className="mb-2.5 flex items-center justify-between">
-              <h2 className="text-sm font-bold text-neutral-900 dark:text-neutral-50">Riwayat Bantuan</h2>
+              <h2 className="text-sm font-bold text-neutral-900 dark:text-neutral-50">
+                Riwayat Bantuan
+              </h2>
               <History className="size-4 text-neutral-400" />
             </div>
             {history.length === 0 ? (
-              <div className={`rounded-lg ${PANEL} p-5 text-center ${SHADOW_SM}`}>
+              <div
+                className={`rounded-lg ${PANEL} p-5 text-center ${SHADOW_SM}`}
+              >
                 <p className="text-xs font-semibold text-neutral-600 dark:text-neutral-300">
                   Belum ada riwayat
                 </p>
@@ -309,7 +531,9 @@ export function ProfileScreen({
 
           <div>
             <div className="mb-2.5 flex items-center justify-between">
-              <h2 className="text-sm font-bold text-neutral-900 dark:text-neutral-50">Tukar Karma</h2>
+              <h2 className="text-sm font-bold text-neutral-900 dark:text-neutral-50">
+                Tukar Karma
+              </h2>
               <Gift className="size-4 text-neutral-400" />
             </div>
             <div className="space-y-2">
@@ -323,11 +547,15 @@ export function ProfileScreen({
                     className={`flex items-center justify-between rounded-lg ${PANEL} p-3.5 ${SHADOW_SM}`}
                   >
                     <div className="flex items-center gap-3">
-                      <div className={`flex size-10 items-center justify-center rounded-md bg-yellow-50 dark:bg-yellow-950/50 border-2 border-yellow-500`}>
+                      <div
+                        className={`flex size-10 items-center justify-center rounded-md bg-yellow-50 dark:bg-yellow-950/50 border-2 border-yellow-500`}
+                      >
                         <Icon className="size-4.5 text-yellow-600 dark:text-yellow-400" />
                       </div>
                       <div>
-                        <p className="text-xs font-bold text-neutral-800 dark:text-neutral-100">{r.label}</p>
+                        <p className="text-xs font-bold text-neutral-800 dark:text-neutral-100">
+                          {r.label}
+                        </p>
                         <p className="flex items-center gap-1 text-[11px] text-neutral-500 dark:text-neutral-400">
                           <Coins className="size-3 text-yellow-600 dark:text-yellow-400" />
                           {r.cost} Karma
@@ -343,7 +571,11 @@ export function ProfileScreen({
                           : "bg-neutral-100 dark:bg-slate-800 text-neutral-400 dark:text-neutral-500"
                       }`}
                     >
-                      {isRedeeming ? <LoaderCircle className="size-3.5 animate-spin" /> : "Tukar"}
+                      {isRedeeming ? (
+                        <LoaderCircle className="size-3.5 animate-spin" />
+                      ) : (
+                        "Tukar"
+                      )}
                     </button>
                   </div>
                 );
@@ -363,7 +595,9 @@ export function ProfileScreen({
                 <div
                   key={p.id}
                   className={`flex items-center gap-3 px-4 py-3 ${
-                    i !== board.length - 1 ? "border-b-2 border-neutral-200 dark:border-slate-700" : ""
+                    i !== board.length - 1
+                      ? "border-b-2 border-neutral-200 dark:border-slate-700"
+                      : ""
                   } ${p.id === user.id ? "bg-blue-50 dark:bg-blue-950/30" : ""}`}
                 >
                   <span
@@ -377,7 +611,11 @@ export function ProfileScreen({
                   >
                     {i + 1}
                   </span>
-                  <AvatarBadge initial={p.initial} color={p.color} size="size-8" />
+                  <AvatarBadge
+                    initial={p.initial}
+                    color={p.color}
+                    size="size-8"
+                  />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-xs font-bold text-neutral-800 dark:text-neutral-100">
                       {p.id === user.id ? "Kamu" : p.name}

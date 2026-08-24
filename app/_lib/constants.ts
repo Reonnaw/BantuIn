@@ -93,3 +93,15 @@ export function randomAvatarColor(seed: string): string {
 }
 
 export const category = (u: Urgency): Category => (u === "low" ? "daily" : "urgent");
+
+export const HOME_NEAR_THRESHOLD_M = 100;
+
+export function haversineM(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6371000 * Math.asin(Math.min(1, Math.sqrt(a)));
+}

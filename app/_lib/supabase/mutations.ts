@@ -8,9 +8,6 @@ export async function signUp(email: string, password: string, name: string) {
     password,
     options: {
       data: { name, role: "Anggota Baru Kos" },
-      // Tanpa ini Supabase memakai Site URL project, yang bisa menunjuk domain
-      // lain dan bikin link konfirmasi mendarat di halaman mati. Origin ini
-      // harus terdaftar di Authentication > URL Configuration > Redirect URLs.
       emailRedirectTo: typeof window === "undefined" ? undefined : window.location.origin,
     },
   });
@@ -40,12 +37,23 @@ export async function setMyLocation(lat: number, lng: number) {
   if (error) throw error;
 }
 
+export async function setHomeLocation(lat: number, lng: number) {
+  const { error } = await supabase.rpc("set_home_location", { p_lat: lat, p_lng: lng });
+  if (error) throw error;
+}
+
+export async function clearHomeLocation() {
+  const { error } = await supabase.rpc("clear_home_location");
+  if (error) throw error;
+}
+
 export async function createHelpRequest(input: {
   title: string;
   description: string;
   urgency: Urgency;
   lat: number;
   lng: number;
+  useHome?: boolean;
 }): Promise<HelpRequestRow> {
   const { data, error } = await supabase.rpc("create_help_request", {
     p_title: input.title,
@@ -53,6 +61,7 @@ export async function createHelpRequest(input: {
     p_urgency: input.urgency,
     p_lat: input.lat,
     p_lng: input.lng,
+    p_use_home: !!input.useHome,
   });
   if (error) throw error;
   return data as HelpRequestRow;
@@ -96,9 +105,6 @@ export async function redeemReward(rewardId: string): Promise<RewardRedemptionRo
   return data as RewardRedemptionRow;
 }
 
-// Tombol SOS masih simulasi, jadi client belum memanggil RPC ini. Function
-// `send_panic_alert` tetap ada di schema.sql beserta cooldown dan filter
-// radiusnya, siap dipakai begitu jalur daruratnya betulan diaktifkan.
 export async function sendPanicAlert(message?: string, radiusM = 1000): Promise<number> {
   const { data, error } = await supabase.rpc("send_panic_alert", {
     p_message: message ?? null,

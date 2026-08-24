@@ -6,9 +6,6 @@ export const PRESS =
 
 export const PANEL = `rounded-lg ${BORDER} bg-white dark:bg-slate-800`;
 
-// textClass wajib bisa diganti: tombol berlatar putih perlu teks gelap. Dulu
-// `text-white` selalu ikut dan bentrok dengan kelas warna yang ditambahkan di
-// pemanggil, hasilnya teks putih di atas tombol putih alias tidak terbaca.
 export function chunkyButton(color: string, textClass = "text-white") {
   return `inline-flex items-center justify-center gap-2 rounded-lg ${BORDER} ${color} px-4 py-3 text-sm font-bold ${textClass} ${SHADOW} ${PRESS} disabled:opacity-40 disabled:shadow-none`;
 }

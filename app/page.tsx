@@ -46,9 +46,6 @@ export default function Page() {
   const linkError = useSyncExternalStore(subscribeUrl, urlAuthError, () => null);
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState(false);
-  // Kalau penggunanya sudah masuk, kegagalan sesaat tadi tidak relevan lagi:
-  // banner merah yang menempel di atas aplikasi yang jalan normal cuma bikin
-  // bingung.
   const authError = user || dismissed ? null : sessionError ?? linkError;
 
   const dismissAuthError = () => {
@@ -63,8 +60,6 @@ export default function Page() {
   const toggleDark = () => {
     const next = !isDark();
     document.documentElement.classList.toggle("dark", next);
-    // Cookie, bukan localStorage, supaya server bisa ikut membacanya saat render
-    // dan tidak perlu skrip inline anti-kedip di root layout.
     document.cookie = `theme=${next ? "dark" : "light"}; path=/; max-age=31536000; samesite=lax`;
     themeListeners.forEach((cb) => cb());
   };
@@ -80,8 +75,6 @@ export default function Page() {
           setSessionError(null);
         }
       } catch (err) {
-        // Sebelumnya error di sini ditelan diam-diam, jadi sesi yang valid tapi
-        // profilnya gagal dimuat tampak seperti akun yang tidak terdaftar.
         if (!active) return;
         setUser(null);
         setSessionError(

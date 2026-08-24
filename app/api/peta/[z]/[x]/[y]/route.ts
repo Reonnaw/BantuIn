@@ -1,7 +1,3 @@
-// Proxy tile OpenStreetMap lewat origin sendiri. Banyak pemblokir iklan dan
-// proteksi pelacakan (Zen, Brave, uBlock) menahan permintaan ke
-// tile.openstreetmap.org, dan hasilnya peta cuma tampak sebagai kotak kosong
-// bergaris. Dari origin yang sama, permintaannya tidak lagi kena filter itu.
 
 const UPSTREAM = "https://tile.openstreetmap.org";
 const MAX_ZOOM = 19;
@@ -15,8 +11,6 @@ export async function GET(
   const col = Number(x);
   const row = Number(y);
 
-  // Hanya angka utuh dalam rentang yang sah yang dipakai menyusun URL upstream,
-  // supaya rute ini tidak bisa dipakai mengambil alamat lain.
   const limit = 2 ** zoom;
   const valid =
     Number.isInteger(zoom) &&
@@ -33,7 +27,6 @@ export async function GET(
 
   const upstream = await fetch(`${UPSTREAM}/${zoom}/${col}/${row}.png`, {
     headers: {
-      // Kebijakan pemakaian tile OpenStreetMap mewajibkan User-Agent yang jelas.
       "User-Agent": "BantuIn/1.0 (aplikasi demo bantuan tetangga)",
     },
     cache: "force-cache",

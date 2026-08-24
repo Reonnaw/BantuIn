@@ -73,6 +73,7 @@ export function HomeScreen({
             </div>
             <button
               onClick={onOpenNotifications}
+              aria-label="Notifikasi"
               className={`relative flex size-9 items-center justify-center rounded-md bg-white dark:bg-slate-800 text-neutral-600 dark:text-neutral-300 ${BORDER} ${SHADOW_SM} ${PRESS}`}
             >
               <Bell className="size-4" />

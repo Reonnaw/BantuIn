@@ -40,6 +40,9 @@ create table if not exists public.help_requests (
 alter table public.help_requests drop column if exists distance_m;
 alter table public.help_requests add column if not exists completed_at timestamptz;
 
+alter table public.profiles add column if not exists home_lat double precision check (home_lat between -90 and 90);
+alter table public.profiles add column if not exists home_lng double precision check (home_lng between -180 and 180);
+
 create table if not exists public.help_request_locations (
   request_id uuid primary key references public.help_requests (id) on delete cascade,
   lat double precision not null check (lat between -90 and 90),
@@ -192,12 +195,55 @@ begin
 end;
 $$;
 
+create or replace function public.set_home_location(p_lat double precision, p_lng double precision)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+begin
+  if v_uid is null then
+    raise exception 'Kamu harus login dulu.';
+  end if;
+
+  if p_lat is null or p_lng is null or p_lat not between -90 and 90 or p_lng not between -180 and 180 then
+    raise exception 'Koordinat tidak valid.';
+  end if;
+
+  update public.profiles set home_lat = p_lat, home_lng = p_lng where id = v_uid;
+  if not found then
+    raise exception 'Profil tidak ditemukan.';
+  end if;
+end;
+$$;
+
+create or replace function public.clear_home_location()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+begin
+  if v_uid is null then
+    raise exception 'Kamu harus login dulu.';
+  end if;
+  update public.profiles set home_lat = null, home_lng = null where id = v_uid;
+end;
+$$;
+
+drop function if exists public.create_help_request(text, text, text, double precision, double precision);
+
 create or replace function public.create_help_request(
   p_title text,
   p_description text,
   p_urgency text,
   p_lat double precision,
-  p_lng double precision
+  p_lng double precision,
+  p_use_home boolean default false
 )
 returns public.help_requests
 language plpgsql
@@ -210,6 +256,11 @@ declare
   v_desc text := nullif(trim(coalesce(p_description, '')), '');
   v_recent integer;
   v_request public.help_requests;
+  v_home_lat double precision;
+  v_home_lng double precision;
+  v_dist double precision;
+  v_final_lat double precision;
+  v_final_lng double precision;
 begin
   if v_uid is null then
     raise exception 'Kamu harus login dulu.';
@@ -229,6 +280,22 @@ begin
 
   if p_lat is null or p_lng is null or p_lat not between -90 and 90 or p_lng not between -180 and 180 then
     raise exception 'Lokasi belum aktif. Izinkan akses lokasi dulu ya.';
+  end if;
+
+  if coalesce(p_use_home, false) then
+    select home_lat, home_lng into v_home_lat, v_home_lng from public.profiles where id = v_uid;
+    if v_home_lat is null or v_home_lng is null then
+      raise exception 'Atur titik kos dulu di Profil ya (Titik Kos belum diatur).';
+    end if;
+    v_dist := public.haversine_m(p_lat, p_lng, v_home_lat, v_home_lng);
+    if v_dist < 100 then
+      raise exception 'Kamu lagi di kos (%.0m dari titik kos). Titik kos cuma bisa dipakai kalau kamu lagi jauh (>100m) dari kos.', v_dist;
+    end if;
+    v_final_lat := v_home_lat;
+    v_final_lng := v_home_lng;
+  else
+    v_final_lat := p_lat;
+    v_final_lng := p_lng;
   end if;
 
   select count(*) into v_recent
@@ -251,14 +318,12 @@ begin
   returning * into v_request;
 
   insert into public.help_request_locations (request_id, lat, lng)
-  values (v_request.id, p_lat, p_lng);
+  values (v_request.id, v_final_lat, v_final_lng);
 
   return v_request;
 end;
 $$;
 
--- Return type berubah (menambah request_lat/request_lng), jadi function lama harus
--- dibuang dulu supaya script ini tetap aman dijalankan ulang.
 drop function if exists public.nearby_help_requests(double precision, double precision, integer, integer);
 
 create or replace function public.nearby_help_requests(
@@ -309,9 +374,6 @@ as $$
       when p_lat is null or p_lng is null or loc.lat is null then null
       else round(public.haversine_m(p_lat, p_lng, loc.lat, loc.lng))::integer
     end as distance_m,
-    -- Titik tempat request dibuat, dikirim apa adanya supaya peta menunjuk lokasi
-    -- yang benar. Yang tetap tidak pernah keluar dari database adalah isi
-    -- user_locations, yaitu posisi terakhir tiap pengguna.
     loc.lat as request_lat,
     loc.lng as request_lng,
     author.name,
@@ -374,8 +436,6 @@ begin
   where id = p_request_id
   returning * into v_request;
 
-  -- Karma sengaja belum dibayar di sini. Penolong baru menerima Karma setelah
-  -- pembuat request menekan konfirmasi lewat complete_help_request().
   select name into v_acceptor_name from public.profiles where id = v_uid;
 
   insert into public.notifications (user_id, type, title, data)
@@ -427,8 +487,6 @@ begin
     raise exception 'Detail laporan maksimal 500 karakter.';
   end if;
 
-  -- Satu orang cuma bisa melaporkan orang yang sama sekali per 24 jam, supaya
-  -- tombol lapor tidak dipakai buat membanjiri antrean moderasi.
   select count(*) into v_recent
   from public.user_reports
   where reporter_id = v_uid
@@ -485,7 +543,6 @@ begin
   where id = p_request_id
   returning * into v_request;
 
-  -- Karma baru berpindah di sini, sekali saja, dikunci oleh status di atas.
   insert into public.karma_history (user_id, request_id, title, karma_delta)
   values (v_request.accepted_by, v_request.id, v_request.title, v_request.reward);
 
@@ -536,7 +593,6 @@ begin
     raise exception 'Request yang sudah diterima tidak bisa dihapus.';
   end if;
 
-  -- Lokasi dan chat ikut terhapus lewat foreign key on delete cascade.
   delete from public.help_requests where id = p_request_id;
 end;
 $$;
@@ -630,8 +686,6 @@ begin
   select
     ul.user_id,
     'panic_alert',
-    -- Awalan [SIMULASI] wajib: tombol SOS di aplikasi masih latihan, jadi
-    -- penerima harus langsung tahu ini bukan keadaan darurat sungguhan.
     '[SIMULASI] ' || v_sender_name || ' mengirim sinyal darurat latihan sekitar '
       || round(public.haversine_m(v_lat, v_lng, ul.lat, ul.lng))::integer || 'm dari kamu',
     jsonb_build_object('alert_id', v_alert_id, 'sender_id', v_uid, 'simulated', true)
@@ -678,10 +732,6 @@ begin
 end;
 $$;
 
--- Hak akses tabel. Row level security saja tidak cukup: policy menyaring baris,
--- tapi role tetap butuh privilege tabel, kalau tidak PostgREST menjawab
--- 42501 "permission denied for table ...". Daftar di bawah persis mengikuti
--- policy yang dibuat di bagian RLS.
 grant usage on schema public to anon, authenticated;
 
 grant select on public.profiles to authenticated;
@@ -695,8 +745,6 @@ grant select on public.user_reports to authenticated;
 grant select, insert on public.chat_messages to authenticated;
 grant select, update on public.notifications to authenticated;
 
--- help_request_locations dan user_locations sengaja tidak diberi grant sama
--- sekali. Isinya cuma boleh disentuh function security definer.
 revoke all on public.help_request_locations from anon, authenticated;
 revoke all on public.user_locations from anon, authenticated;
 
@@ -705,7 +753,9 @@ grant execute on function public.redeem_reward(uuid) to authenticated;
 grant execute on function public.send_panic_alert(text, integer) to authenticated;
 grant execute on function public.submit_identity_verification() to authenticated;
 grant execute on function public.set_my_location(double precision, double precision) to authenticated;
-grant execute on function public.create_help_request(text, text, text, double precision, double precision) to authenticated;
+grant execute on function public.set_home_location(double precision, double precision) to authenticated;
+grant execute on function public.clear_home_location() to authenticated;
+grant execute on function public.create_help_request(text, text, text, double precision, double precision, boolean) to authenticated;
 grant execute on function public.nearby_help_requests(double precision, double precision, integer, integer) to authenticated;
 grant execute on function public.delete_help_request(uuid) to authenticated;
 grant execute on function public.complete_help_request(uuid) to authenticated;
@@ -741,8 +791,6 @@ create policy "help_requests_select_all" on public.help_requests
 
 drop policy if exists "help_requests_insert_own" on public.help_requests;
 
--- Pelapor cuma bisa melihat laporannya sendiri. Orang yang dilaporkan tidak
--- pernah tahu siapa yang melaporkannya, dan penulisan hanya lewat report_user().
 drop policy if exists "user_reports_select_own" on public.user_reports;
 create policy "user_reports_select_own" on public.user_reports
   for select to authenticated

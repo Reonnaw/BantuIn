@@ -5,8 +5,6 @@ import { MapPin, TriangleAlert } from "lucide-react";
 import "leaflet/dist/leaflet.css";
 import { BORDER } from "../_lib/ui";
 
-// Marker digambar sebagai divIcon, bukan gambar bawaan Leaflet, supaya tidak ada
-// aset PNG yang perlu ikut ke bundle dan gayanya nyambung dengan sisa aplikasi.
 function pin(color: string, label: string) {
   return `<span style="display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;border:2px solid #171717;background:${color};color:#fff;font-size:10px;font-weight:800;box-shadow:2px 2px 0 0 #171717">${label}</span>`;
 }
@@ -41,8 +39,6 @@ export function RequestMap({
         maxZoom: 19,
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
       });
-      // Pemblokir iklan atau tracking protection sering menahan tile.openstreetmap.org.
-      // Tanpa penanda ini, petanya cuma tampak sebagai kotak kosong bergaris.
       tiles.on("tileerror", () => setTilesBlocked(true));
       tiles.on("tileload", () => setTilesBlocked(false));
       tiles.addTo(map);
@@ -64,14 +60,11 @@ export function RequestMap({
           weight: 2,
           dashArray: "5 5",
         }).addTo(map);
-        // Zoom otomatis ke kotak terkecil yang memuat kedua titik.
         map.fitBounds(L.latLngBounds([userPoint, requestPoint]), { padding: [34, 34], maxZoom: 17 });
       } else {
         map.setView(requestPoint, 16);
       }
 
-      // Peta dibuat saat panel detail masih beranimasi masuk. Tanpa ini
-      // Leaflet kadang mengunci ukuran lama dan petanya tampak gepeng.
       setTimeout(() => map?.invalidateSize(), 250);
     })();
 

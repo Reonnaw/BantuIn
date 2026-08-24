@@ -31,9 +31,6 @@ export const metadata: Metadata = {
     "Micro help board dan panic button untuk anak kos. Minta bantuan, kumpulin Karma Baik, dan bangun komunitas yang saling peduli dalam radius 500 meter.",
 };
 
-// Tema dibaca dari cookie di server, jadi kelas `dark` sudah menempel di HTML
-// pertama. Tidak perlu skrip inline anti-kedip, dan halaman tidak pernah tampil
-// sebentar dengan tema yang salah.
 export default async function RootLayout({ children }: LayoutProps<"/">) {
   const dark = (await cookies()).get("theme")?.value === "dark";
 

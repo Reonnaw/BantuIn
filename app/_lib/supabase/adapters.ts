@@ -30,6 +30,8 @@ export function toAppUser(profile: ProfileRow, email: string): AppUser {
     karma: profile.karma,
     verified: profile.verified,
     isNew: profile.is_new,
+    homeLat: profile.home_lat ?? null,
+    homeLng: profile.home_lng ?? null,
   };
 }
 

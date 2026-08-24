@@ -1,6 +1,3 @@
-// Supabase mengembalikan hasil link konfirmasi email lewat query string atau
-// fragment URL. Kalau tidak dibaca, kegagalannya tidak terlihat sama sekali dan
-// pengguna cuma mendarat di layar sambutan seolah akunnya tidak pernah ada.
 
 const MESSAGES: Record<string, string> = {
   otp_expired: "Link konfirmasinya sudah kedaluwarsa. Daftar ulang atau minta link baru.",
